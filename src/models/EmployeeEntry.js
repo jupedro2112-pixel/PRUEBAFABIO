@@ -38,6 +38,15 @@ const descuentoSchema = new mongoose.Schema({
   note: { type: String, default: '', maxlength: 200 }
 }, { _id: false });
 
+// Ajuste manual del pago — puede ser POSITIVO o NEGATIVO. Cubre situaciones
+// como un cambio de turno/sueldo a mitad de mes: se carga la diferencia
+// con su detalle. Sin `min` para permitir montos negativos.
+const ajusteSchema = new mongoose.Schema({
+  dateKey: { type: String, default: '' }, // YYYY-MM-DD (opcional)
+  amountARS: { type: Number, default: 0 },
+  note: { type: String, default: '', maxlength: 200 }
+}, { _id: false });
+
 const employeeSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
 
@@ -60,11 +69,16 @@ const employeeSchema = new mongoose.Schema({
   schedule: { type: String, default: '', trim: true, maxlength: 200 },
   sueldoARS: { type: Number, default: 0, min: 0 },
 
+  // Comisión por empleado: costo fijo de la transferencia del sueldo, en
+  // USD. Se cuenta una vez en el cierre del pago. Default 2.
+  comisionUSD: { type: Number, default: 2, min: 0 },
+
   // Movimientos del mes: feriados trabajados (suman), faltas (descuentan),
-  // descuentos puntuales (restan con detalle).
+  // descuentos puntuales (restan con detalle), ajustes manuales (+ o −).
   feriados: { type: [feriadoSchema], default: [] },
   faltantes: { type: [faltanteSchema], default: [] },
   descuentos: { type: [descuentoSchema], default: [] },
+  ajustes: { type: [ajusteSchema], default: [] },
 
   // IDs de feriados generales del sector que este empleado NO cobra.
   // Por defecto vacío = cobra todos los feriados generales del sector.

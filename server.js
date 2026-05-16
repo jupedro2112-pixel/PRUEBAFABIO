@@ -36550,6 +36550,16 @@ function _empCompute(e, sectorCfg) {
   }
   const faltantesTotal = faltantes.length * valorDia;
   const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
+  // Ajustes manuales: pueden ser + o − (ej. diferencia por cambio de turno).
+  const ajustes = Array.isArray(e.ajustes) ? e.ajustes : [];
+  const ajustesTotal = ajustes.reduce((s, a) => s + Number(a.amountARS || 0), 0);
+  // Comisión: costo fijo de transferencia en USD → ARS con la cotización
+  // del sector. Es un gasto aparte del sueldo (no lo recibe el empleado).
+  const comisionUSD = Number(e.comisionUSD != null ? e.comisionUSD : 2);
+  const usdRate = Number((sectorCfg && sectorCfg.usdRate) || 0);
+  const comisionARS = comisionUSD * usdRate;
+  const totalMensual = sueldo + feriadosTotal + feriadosGeneralesTotal
+    - faltantesTotal - descuentosTotal + ajustesTotal;
   return {
     sueldoARS: sueldo,
     valorDia,
@@ -36561,7 +36571,12 @@ function _empCompute(e, sectorCfg) {
     faltantesCount: faltantes.length,
     descuentosTotal,
     descuentosCount: descuentos.length,
-    totalMensual: sueldo + feriadosTotal + feriadosGeneralesTotal - faltantesTotal - descuentosTotal
+    ajustesTotal,
+    ajustesCount: ajustes.length,
+    comisionUSD,
+    comisionARS,
+    totalMensual,
+    costoTotal: totalMensual + comisionARS
   };
 }
 
@@ -36608,9 +36623,11 @@ app.post('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async
       name: String(b.name || '').trim().slice(0, 100),
       schedule: String(b.schedule || '').trim().slice(0, 200),
       sueldoARS: Math.max(0, Number(b.sueldoARS) || 0),
+      comisionUSD: (b.comisionUSD != null ? Math.max(0, Number(b.comisionUSD) || 0) : 2),
       feriados: [],
       faltantes: [],
       descuentos: [],
+      ajustes: [],
       feriadosGeneralesExcluidos: [],
       francosPerWeek: 0,
       francoDays: [],
@@ -36688,9 +36705,12 @@ app.post('/api/admin/empleados/cierre', authMiddleware, closingsAccessMiddleware
     }));
     const bySector = {};
     let grandTotalARS = 0;
+    let comisionesTotalARS = 0;
     for (const e of employees) {
       const t = Number(e.computed && e.computed.totalMensual) || 0;
+      const com = Number(e.computed && e.computed.comisionARS) || 0;
       grandTotalARS += t;
+      comisionesTotalARS += com;
       bySector[e.sector] = (bySector[e.sector] || 0) + t;
     }
 
@@ -36702,6 +36722,8 @@ app.post('/api/admin/empleados/cierre', authMiddleware, closingsAccessMiddleware
       employees,
       employeeCount: employees.length,
       grandTotalARS,
+      comisionesTotalARS,
+      costoTotalARS: grandTotalARS + comisionesTotalARS,
       bySector,
       sectorConfigs
     });
@@ -36728,7 +36750,8 @@ app.get('/api/admin/empleados/cierres', authMiddleware, closingsAccessMiddleware
   try {
     const rows = await EmployeeClosing.find({}, {
       id: 1, periodLabel: 1, closedAt: 1, closedBy: 1, paid: 1, paidAt: 1,
-      employeeCount: 1, grandTotalARS: 1, bySector: 1, _id: 0
+      employeeCount: 1, grandTotalARS: 1, comisionesTotalARS: 1, costoTotalARS: 1,
+      bySector: 1, _id: 0
     }).sort({ closedAt: -1 }).limit(120).lean();
     res.json({ success: true, items: rows });
   } catch (err) {
@@ -36852,6 +36875,16 @@ app.put('/api/admin/empleados/:id', authMiddleware, closingsAccessMiddleware, as
         amountARS: Math.max(0, Number((d && d.amountARS) || 0)),
         note: String((d && d.note) || '').slice(0, 200)
       }));
+    }
+    if (Array.isArray(b.ajustes)) {
+      e.ajustes = b.ajustes.map(a => ({
+        dateKey: String((a && a.dateKey) || '').slice(0, 10),
+        amountARS: Number((a && a.amountARS) || 0), // + o −
+        note: String((a && a.note) || '').slice(0, 200)
+      }));
+    }
+    if (b.comisionUSD !== undefined) {
+      e.comisionUSD = Math.max(0, Number(b.comisionUSD) || 0);
     }
     if (b.francosPerWeek !== undefined) {
       e.francosPerWeek = Math.min(7, Math.max(0, Math.round(Number(b.francosPerWeek) || 0)));

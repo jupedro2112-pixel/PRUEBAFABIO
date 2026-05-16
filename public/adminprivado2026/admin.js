@@ -28123,13 +28123,22 @@ function _empComputeLocal(e) {
     }
     const faltantesTotal = faltantes.length * valorDia;
     const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
+    const ajustes = Array.isArray(e.ajustes) ? e.ajustes : [];
+    const ajustesTotal = ajustes.reduce((s, a) => s + Number(a.amountARS || 0), 0);
+    const comisionUSD = Number(e.comisionUSD != null ? e.comisionUSD : 2);
+    const usdRate = Number(((_empSectorConfigs[e.sector] || {}).usdRate) || 0);
+    const comisionARS = comisionUSD * usdRate;
+    const totalMensual = sueldo + feriadosTotal + feriadosGeneralesTotal - faltantesTotal - descuentosTotal + ajustesTotal;
     return {
         sueldoARS: sueldo, valorDia,
         feriadosTotal, feriadosCount: feriados.length,
         feriadosGeneralesTotal, feriadosGeneralesCount,
         faltantesTotal, faltantesCount: faltantes.length,
         descuentosTotal, descuentosCount: descuentos.length,
-        totalMensual: sueldo + feriadosTotal + feriadosGeneralesTotal - faltantesTotal - descuentosTotal
+        ajustesTotal, ajustesCount: ajustes.length,
+        comisionUSD, comisionARS,
+        totalMensual,
+        costoTotal: totalMensual + comisionARS
     };
 }
 
@@ -28492,6 +28501,7 @@ function _renderEmpleadoRow(e) {
     h += '<div><label style="' + lbl + '">Horario</label><input data-emp-field="schedule" type="text" value="' + escapeHtml(e.schedule || '') + '" placeholder="Ej: lun-vie 10-18hs" maxlength="200" style="' + inp + '"></div>';
     h += '<div><label style="' + lbl + '">Puesto</label><input data-emp-field="role" type="text" value="' + escapeHtml(e.role || '') + '" maxlength="60" style="' + inp + 'border-color:rgba(155,48,255,0.30);color:#c89bff;font-weight:700;"></div>';
     h += '<div><label style="' + lbl + '">Sueldo base $</label><input data-emp-field="sueldoARS" type="number" min="0" step="1000" value="' + Number(e.sueldoARS || 0) + '" style="' + inp + 'border-color:rgba(0,212,255,0.30);color:#00d4ff;font-weight:800;text-align:right;"></div>';
+    h += '<div><label style="' + lbl + '">Comisión transfer. (USD)</label><input data-emp-field="comisionUSD" type="number" min="0" step="0.5" value="' + Number(e.comisionUSD != null ? e.comisionUSD : 2) + '" style="' + inp + 'border-color:rgba(255,170,102,0.30);color:#ffaa66;font-weight:800;text-align:right;"></div>';
     h += '</div>';
 
     // === Francos + Trabajó hasta ===
@@ -28578,6 +28588,29 @@ function _renderEmpleadoRow(e) {
     }
     h += '</div>';
 
+    // === Ajustes manuales (+ o −) ===
+    const _empAj = Array.isArray(e.ajustes) ? e.ajustes : [];
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px;">';
+    h += '<div style="color:#00d4ff;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">⇄ AJUSTES (' + c.ajustesCount + ') · total: ' + (c.ajustesTotal >= 0 ? '+' : '') + formatMoney(Math.round(c.ajustesTotal)) + '</div>';
+    h += '<button onclick="addEmpAjuste(\'' + eid + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.35);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Ajuste</button>';
+    h += '</div>';
+    h += '<div style="color:#888;font-size:10px;margin-bottom:6px;">Monto + o − con detalle. Ej: cambio de turno a mitad de mes, diferencia de sueldo.</div>';
+    if (_empAj.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin ajustes.</div>';
+    } else {
+        for (let i = 0; i < _empAj.length; i++) {
+            const a = _empAj[i] || {};
+            h += '<div data-emp-ajuste="' + i + '" style="display:grid;grid-template-columns:140px 130px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
+            h += '<input data-emp-ajuste-field="dateKey" type="date" value="' + escapeHtml(a.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(0,212,255,0.25);color:#9fe4ff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
+            h += '<input data-emp-ajuste-field="amountARS" type="number" step="500" value="' + Number(a.amountARS || 0) + '" placeholder="Monto + o −" style="background:rgba(0,0,0,0.30);border:1px solid rgba(0,212,255,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
+            h += '<input data-emp-ajuste-field="note" type="text" value="' + escapeHtml(a.note || '') + '" placeholder="Detalle del ajuste" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
+            h += '<button onclick="removeEmpAjuste(\'' + eid + '\',' + i + ')" title="Sacar ajuste" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '</div>';
+        }
+    }
+    h += '</div>';
+
     // === Resumen general ===
     const francoTxt = francoDays.length
         ? francoDays.map(k => (EMP_FRANCO_DAYS_UI.find(x => x.key === k) || {}).short || k).join(', ')
@@ -28590,7 +28623,10 @@ function _renderEmpleadoRow(e) {
     h += '<div style="color:#aaa;">+ Feriados grales (' + c.feriadosGeneralesCount + ')<br><span style="color:#ffd700;font-weight:800;">+' + formatMoney(Math.round(c.feriadosGeneralesTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">− Faltas (' + c.faltantesCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.faltantesTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">− Descuentos (' + c.descuentosCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.descuentosTotal)) + '</span></div>';
+    h += '<div style="color:#aaa;">⇄ Ajustes (' + c.ajustesCount + ')<br><span style="color:#00d4ff;font-weight:800;">' + (c.ajustesTotal >= 0 ? '+' : '') + formatMoney(Math.round(c.ajustesTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">= TOTAL MENSUAL<br><span style="color:#c89bff;font-weight:900;font-size:14px;">' + formatMoney(Math.round(c.totalMensual)) + '</span></div>';
+    h += '<div style="color:#aaa;">+ Comisión transfer.<br><span style="color:#ffaa66;font-weight:800;">+' + formatMoney(Math.round(c.comisionARS)) + '</span> <span style="color:#666;font-size:10px;">(' + c.comisionUSD + ' USD)</span></div>';
+    h += '<div style="color:#aaa;">= COSTO TOTAL<br><span style="color:#ffd700;font-weight:900;font-size:14px;">' + formatMoney(Math.round(c.costoTotal)) + '</span></div>';
     h += '</div></div>';
 
     // === Botones ===
@@ -28637,6 +28673,14 @@ function _collectEmpPayload(id) {
             note: (row.querySelector('[data-emp-descuento-field="note"]') || {}).value || ''
         });
     });
+    const ajustes = [];
+    card.querySelectorAll('[data-emp-ajuste]').forEach(row => {
+        ajustes.push({
+            dateKey: (row.querySelector('[data-emp-ajuste-field="dateKey"]') || {}).value || '',
+            amountARS: Number((row.querySelector('[data-emp-ajuste-field="amountARS"]') || {}).value || 0),
+            note: (row.querySelector('[data-emp-ajuste-field="note"]') || {}).value || ''
+        });
+    });
     // francoDays y feriadosGeneralesExcluidos se togglean en el cache.
     const emp = (_empCache || []).find(x => x.id === id);
     const francoDays = (emp && Array.isArray(emp.francoDays)) ? emp.francoDays.slice() : [];
@@ -28646,11 +28690,13 @@ function _collectEmpPayload(id) {
         schedule: get('schedule'),
         role: (get('role') || '').toLowerCase().trim(),
         sueldoARS: Number(get('sueldoARS')) || 0,
+        comisionUSD: Number(get('comisionUSD')) || 0,
         francosPerWeek: Number(get('francosPerWeek')) || 0,
         workedUntil: get('workedUntil') || '',
         feriados,
         faltantes,
         descuentos,
+        ajustes,
         francoDays,
         feriadosGeneralesExcluidos
     };
@@ -28739,6 +28785,22 @@ function removeEmpDescuento(id, idx) {
     const emp = _empSyncFromDom(id);
     if (!emp || !Array.isArray(emp.descuentos)) return;
     emp.descuentos.splice(idx, 1);
+    _renderEmpleados();
+}
+
+function addEmpAjuste(id) {
+    const emp = _empSyncFromDom(id);
+    if (!emp) return;
+    if (!Array.isArray(emp.ajustes)) emp.ajustes = [];
+    emp.ajustes.push({ dateKey: '', amountARS: 0, note: '' });
+    _renderEmpleados();
+    showToast('Cargá el monto (+ o −) y el detalle, después 💾 Guardar', 'info');
+}
+
+function removeEmpAjuste(id, idx) {
+    const emp = _empSyncFromDom(id);
+    if (!emp || !Array.isArray(emp.ajustes)) return;
+    emp.ajustes.splice(idx, 1);
     _renderEmpleados();
 }
 

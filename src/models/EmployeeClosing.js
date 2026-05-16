@@ -25,7 +25,9 @@ const closingSchema = new mongoose.Schema({
   employees: { type: [mongoose.Schema.Types.Mixed], default: [] },
   employeeCount: { type: Number, default: 0 },
 
-  grandTotalARS: { type: Number, default: 0 },
+  grandTotalARS: { type: Number, default: 0 },        // suma de sueldos a pagar
+  comisionesTotalARS: { type: Number, default: 0 },    // suma de comisiones de transferencia
+  costoTotalARS: { type: Number, default: 0 },         // grandTotal + comisiones
   bySector: { type: mongoose.Schema.Types.Mixed, default: {} },
 
   // Configs de sector al momento del cierre (feriados generales) — para
