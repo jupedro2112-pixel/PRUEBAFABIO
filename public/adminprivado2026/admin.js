@@ -28080,6 +28080,7 @@ const EMP_DEFAULT_ROLES = [
 let _empCache = [];
 let _empSector = 'ganamos';
 let _empSectorConfigs = {}; // { sector: { feriadosGenerales:[], usdRate } }
+let _empClosingsCache = []; // historial de cierres
 
 function _empRoleLabel(role) {
     const def = EMP_DEFAULT_ROLES.find(r => r.key === role);
@@ -28153,16 +28154,105 @@ async function loadEmpleados() {
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
     try {
-        const r = await authFetch('/api/admin/empleados');
+        const [r, rc] = await Promise.all([
+            authFetch('/api/admin/empleados'),
+            authFetch('/api/admin/empleados/cierres')
+        ]);
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
         _empCache = d.items || [];
         _empSectorConfigs = d.sectorConfigs || {};
+        try {
+            const dc = await rc.json();
+            _empClosingsCache = (rc.ok && dc.success) ? (dc.items || []) : [];
+        } catch (_) { _empClosingsCache = []; }
         _renderEmpleados();
     } catch (e) {
         console.error('[empleados] load fail:', e);
         body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
+}
+
+// Cierra el período: congela una foto en el historial y deja la hoja limpia.
+async function doEmpCierre() {
+    const label = (document.getElementById('empCierreLabel') && document.getElementById('empCierreLabel').value || '').trim();
+    if (!confirm('¿Cerrar el período' + (label ? ' "' + label + '"' : '') + '?\n\nSe guarda una foto en el historial con el total de cada empleado. Después la hoja queda limpia de feriados/faltas/descuentos — los empleados y sueldos se conservan.')) return;
+    try {
+        const r = await authFetch('/api/admin/empleados/cierre', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ periodLabel: label })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'No se pudo cerrar', 'error'); return; }
+        showToast('✅ Período cerrado — ' + (d.employeeCount || 0) + ' empleados', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error al cerrar el período', 'error');
+    }
+}
+
+async function toggleEmpClosingPaid(id, paid) {
+    try {
+        const r = await authFetch('/api/admin/empleados/cierres/' + encodeURIComponent(id) + '/paid', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paid: !!paid })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        const c = (_empClosingsCache || []).find(x => x.id === id);
+        if (c) { c.paid = !!paid; c.paidAt = d.paidAt; }
+        _renderEmpleados();
+    } catch (e) {
+        showToast('Error al guardar', 'error');
+    }
+}
+
+async function viewEmpClosing(id) {
+    try {
+        const r = await authFetch('/api/admin/empleados/cierres/' + encodeURIComponent(id));
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        _showEmpClosingModal(d.closing);
+    } catch (e) {
+        showToast('Error al cargar el cierre', 'error');
+    }
+}
+
+function _showEmpClosingModal(c) {
+    const old = document.getElementById('empClosingModal');
+    if (old) old.remove();
+    const fch = c.closedAt ? new Date(c.closedAt).toLocaleString('es-AR') : '';
+    let rows = '';
+    for (const e of (c.employees || [])) {
+        const cp = e.computed || {};
+        rows += '<tr style="border-top:1px solid rgba(255,255,255,0.07);">'
+            + '<td style="padding:5px 7px;color:#aaa;">' + escapeHtml(e.sector || '') + '</td>'
+            + '<td style="padding:5px 7px;color:#fff;">' + escapeHtml(e.name || '—') + '</td>'
+            + '<td style="padding:5px 7px;color:#aaa;">' + escapeHtml(e.role || '') + '</td>'
+            + '<td style="padding:5px 7px;text-align:right;color:#00d4ff;">' + formatMoney(Math.round(cp.sueldoARS || 0)) + '</td>'
+            + '<td style="padding:5px 7px;text-align:right;color:#d4af37;font-weight:800;">' + formatMoney(Math.round(cp.totalMensual || 0)) + '</td>'
+            + '</tr>';
+    }
+    const overlay = document.createElement('div');
+    overlay.id = 'empClosingModal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.innerHTML =
+        '<div style="background:#14141c;border:1.5px solid rgba(212,175,55,0.45);border-radius:14px;max-width:680px;width:100%;padding:18px;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;">'
+        + '<div><div style="color:#d4af37;font-weight:900;font-size:15px;">🔒 ' + escapeHtml(c.periodLabel || fch || 'Cierre') + (c.paid ? ' · ✅ PAGADO' : '') + '</div>'
+        + '<div style="color:#888;font-size:11px;">Cerrado: ' + escapeHtml(fch) + ' · ' + (c.employeeCount || 0) + ' empleados</div></div>'
+        + '<button onclick="document.getElementById(\'empClosingModal\').remove()" style="background:none;border:none;color:#999;font-size:22px;cursor:pointer;line-height:1;">×</button>'
+        + '</div>'
+        + '<div style="color:#fff;font-size:14px;font-weight:900;margin-bottom:8px;">Total del cierre: <span style="color:#d4af37;">' + formatMoney(Math.round(c.grandTotalARS || 0)) + '</span></div>'
+        + '<div style="max-height:60vh;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">'
+        + '<tr style="color:#aaa;font-size:10px;text-transform:uppercase;"><th style="padding:5px 7px;text-align:left;">Sector</th><th style="padding:5px 7px;text-align:left;">Nombre</th><th style="padding:5px 7px;text-align:left;">Puesto</th><th style="padding:5px 7px;text-align:right;">Sueldo</th><th style="padding:5px 7px;text-align:right;">Total</th></tr>'
+        + rows
+        + '</table></div>'
+        + '</div>';
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }
 
 function _renderEmpleados() {
@@ -28180,6 +28270,36 @@ function _renderEmpleados() {
         const color = active ? '#000' : s.color;
         const border = active ? s.color : (s.color + '55');
         h += '<button onclick="setEmpSector(\'' + s.key + '\')" style="flex:1;min-width:140px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:10px 12px;border-radius:9px;font-weight:900;font-size:13px;letter-spacing:0.5px;cursor:pointer;">' + s.label + '</button>';
+    }
+    h += '</div>';
+
+    // === Cierre de empleados (global — todos los sectores) ===
+    const _clos = _empClosingsCache || [];
+    h += '<div style="background:rgba(212,175,55,0.06);border:1.5px solid rgba(212,175,55,0.40);border-radius:11px;padding:13px 14px;margin-bottom:14px;">';
+    h += '<div style="color:#d4af37;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:4px;">🔒 CIERRE DE EMPLEADOS</div>';
+    h += '<div style="color:#888;font-size:10.5px;margin-bottom:9px;line-height:1.5;">Cerrá el período (el 5 de cada mes o cuando quieras). Se guarda una foto en el historial con el total de cada empleado. Después la hoja arranca limpia: se conservan empleados y sueldos, se resetean feriados / faltas / descuentos.</div>';
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">';
+    h += '<input id="empCierreLabel" type="text" maxlength="80" placeholder="Nombre del período (ej: Mayo 2026)" style="flex:1;min-width:180px;background:rgba(0,0,0,0.45);border:1px solid rgba(212,175,55,0.40);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;box-sizing:border-box;">';
+    h += '<button onclick="doEmpCierre()" style="background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🔒 CERRAR PERÍODO</button>';
+    h += '</div>';
+    if (_clos.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Todavía no hay cierres.</div>';
+    } else {
+        h += '<div style="color:#aaa;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">📁 Historial de cierres (' + _clos.length + ')</div>';
+        for (const c of _clos) {
+            const fch = c.closedAt ? new Date(c.closedAt).toLocaleDateString('es-AR') : '';
+            const lbl = c.periodLabel || fch || 'Cierre';
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:rgba(0,0,0,0.30);border:1px solid ' + (c.paid ? 'rgba(102,255,102,0.35)' : 'rgba(255,255,255,0.08)') + ';border-radius:8px;padding:8px 11px;margin-bottom:6px;">';
+            h += '<div style="min-width:0;">';
+            h += '<div style="color:#fff;font-weight:800;font-size:12.5px;">' + escapeHtml(lbl) + (c.paid ? ' <span style="color:#66ff66;font-size:10.5px;">✅ PAGADO</span>' : '') + '</div>';
+            h += '<div style="color:#888;font-size:10.5px;">' + escapeHtml(fch) + ' · ' + (c.employeeCount || 0) + ' empleados · <strong style="color:#d4af37;">' + formatMoney(Math.round(c.grandTotalARS || 0)) + '</strong></div>';
+            h += '</div>';
+            h += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
+            h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#fff;cursor:pointer;background:rgba(255,255,255,0.04);padding:4px 9px;border-radius:6px;"><input type="checkbox" ' + (c.paid ? 'checked' : '') + ' onchange="toggleEmpClosingPaid(\'' + escapeHtml(c.id) + '\', this.checked)"> Pagado</label>';
+            h += '<button onclick="viewEmpClosing(\'' + escapeHtml(c.id) + '\')" style="background:rgba(212,175,55,0.12);color:#d4af37;border:1px solid rgba(212,175,55,0.40);padding:4px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">👁 Ver</button>';
+            h += '</div>';
+            h += '</div>';
+        }
     }
     h += '</div>';
 

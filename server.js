@@ -36518,6 +36518,7 @@ app.get('/api/admin/active-users-count', authMiddleware, adminMiddleware, (req, 
 
 const EmployeeEntry = require('./src/models/EmployeeEntry');
 const EmployeeSectorConfig = require('./src/models/EmployeeSectorConfig');
+const EmployeeClosing = require('./src/models/EmployeeClosing');
 const EMP_DELETE_PIN = '1818';
 const EMP_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
 const EMP_DIAS_MES = 30;
@@ -36659,6 +36660,107 @@ app.put('/api/admin/empleados/sector-config', authMiddleware, closingsAccessMidd
     res.json({ success: true });
   } catch (err) {
     logger.error(`PUT /api/admin/empleados/sector-config: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ===================== CIERRES DE EMPLEADOS =====================
+// Registrados ANTES de /:id para que la ruta con parámetro no los capture.
+
+// POST /api/admin/empleados/cierre — congela el período actual como
+// historial y deja la hoja viva limpia de movimientos para el siguiente.
+app.post('/api/admin/empleados/cierre', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const [rows, sectorConfigs] = await Promise.all([
+      EmployeeEntry.find({}).sort({ sector: 1, role: 1, name: 1 }).lean(),
+      _empLoadSectorConfigs()
+    ]);
+    if (rows.length === 0) return res.status(400).json({ error: 'No hay empleados para cerrar.' });
+
+    const employees = rows.map(r => ({
+      empId: r.id, sector: r.sector, role: r.role, name: r.name,
+      schedule: r.schedule || '', sueldoARS: r.sueldoARS || 0,
+      feriados: r.feriados || [], faltantes: r.faltantes || [], descuentos: r.descuentos || [],
+      feriadosGeneralesExcluidos: r.feriadosGeneralesExcluidos || [],
+      francosPerWeek: r.francosPerWeek || 0, francoDays: r.francoDays || [],
+      workedUntil: r.workedUntil || '', notes: r.notes || '',
+      computed: _empCompute(r, sectorConfigs[r.sector])
+    }));
+    const bySector = {};
+    let grandTotalARS = 0;
+    for (const e of employees) {
+      const t = Number(e.computed && e.computed.totalMensual) || 0;
+      grandTotalARS += t;
+      bySector[e.sector] = (bySector[e.sector] || 0) + t;
+    }
+
+    const closing = await EmployeeClosing.create({
+      id: `empc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      periodLabel: String((req.body && req.body.periodLabel) || '').trim().slice(0, 80),
+      closedAt: new Date(),
+      closedBy: (req.user && req.user.username) || '',
+      employees,
+      employeeCount: employees.length,
+      grandTotalARS,
+      bySector
+    });
+
+    // Hoja nueva: se conservan empleados, sueldos, francos y roles; se
+    // resetean los movimientos del período (feriados/faltantes/descuentos)
+    // y las exclusiones de feriados generales. Los feriados generales del
+    // sector también pertenecen al período cerrado, así que se limpian.
+    await EmployeeEntry.updateMany({}, {
+      $set: { feriados: [], faltantes: [], descuentos: [], feriadosGeneralesExcluidos: [] }
+    });
+    await EmployeeSectorConfig.updateMany({}, { $set: { feriadosGenerales: [] } });
+
+    logger.info(`[empleados] cierre ${closing.id} por ${(req.user && req.user.username) || '?'} — ${employees.length} empleados · total $${grandTotalARS}`);
+    res.json({ success: true, id: closing.id, employeeCount: employees.length, grandTotalARS });
+  } catch (err) {
+    logger.error(`POST /api/admin/empleados/cierre: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/empleados/cierres — historial (resumen, sin el detalle).
+app.get('/api/admin/empleados/cierres', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const rows = await EmployeeClosing.find({}, {
+      id: 1, periodLabel: 1, closedAt: 1, closedBy: 1, paid: 1, paidAt: 1,
+      employeeCount: 1, grandTotalARS: 1, bySector: 1, _id: 0
+    }).sort({ closedAt: -1 }).limit(120).lean();
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    logger.error(`GET /api/admin/empleados/cierres: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/empleados/cierres/:id — detalle completo de un cierre.
+app.get('/api/admin/empleados/cierres/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const c = await EmployeeClosing.findOne({ id: String(req.params.id || '') }).lean();
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    res.json({ success: true, closing: c });
+  } catch (err) {
+    logger.error(`GET /api/admin/empleados/cierres/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/empleados/cierres/:id/paid — tildar/destildar pagado.
+app.post('/api/admin/empleados/cierres/:id/paid', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const paid = !!(req.body && req.body.paid);
+    const c = await EmployeeClosing.findOneAndUpdate(
+      { id: String(req.params.id || '') },
+      { $set: { paid, paidAt: paid ? new Date() : null, paidBy: paid ? ((req.user && req.user.username) || '') : '' } },
+      { new: true }
+    );
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    res.json({ success: true, paid: c.paid, paidAt: c.paidAt });
+  } catch (err) {
+    logger.error(`POST /api/admin/empleados/cierres/:id/paid: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
