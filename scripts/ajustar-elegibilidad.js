@@ -1,15 +1,16 @@
 /**
  * ajustar-elegibilidad.js
  *
- * Ajusta el umbral de elegibilidad de un sorteo (free/weekly) ya creado:
- * la política NETWIN (pérdida neta) o CARGAS (depósitos), o lo abre a todos.
+ * Ajusta, en un sorteo (free/weekly) ya creado:
+ *   - el umbral de elegibilidad: política NETWIN, CARGAS, o abierto a todos
+ *   - la fecha de sorteo (drawDate), que controla el cierre de ventas
  *
  * Se conecta a Mongo con MONGODB_URI. Correlo donde la base sea accesible
  * (shell de Render, o el host donde corre la app).
  *
  * USO:
  *   node scripts/ajustar-elegibilidad.js
- *       -> LISTA los sorteos activos con su umbral actual (no cambia nada)
+ *       -> LISTA los sorteos activos con su umbral y drawDate (no cambia nada)
  *
  *   node scripts/ajustar-elegibilidad.js netwin  <raffleId> <monto>
  *       -> exige perder al menos <monto> ARS netos esta semana
@@ -19,6 +20,11 @@
  *
  *   node scripts/ajustar-elegibilidad.js abierto <raffleId>
  *       -> sin filtro: TODOS pueden elegir número
+ *
+ *   node scripts/ajustar-elegibilidad.js fecha   <raffleId> <fechaISO>
+ *       -> cambia el drawDate. Las ventas se cierran 3 hs ANTES de esa fecha.
+ *          Ej: para que las ventas cierren a las 21:00, poné drawDate a las 24:00:
+ *          node scripts/ajustar-elegibilidad.js fecha abc123 "2026-05-19T00:00:00-03:00"
  *
  * Recordá: en el endpoint de compra, minNetLossARS>0 manda sobre minCargasARS.
  * Por eso al setear "cargas" ponemos netloss en 0, y viceversa.
@@ -38,8 +44,14 @@ function politica(r) {
   return 'ABIERTO — sin filtro, todos pueden';
 }
 
+// drawDate menos el cutoff hardcodeado de 3 hs = momento en que cierran ventas.
+function cierreVentas(drawDate) {
+  if (!drawDate) return '(sin fecha)';
+  return new Date(new Date(drawDate).getTime() - 3 * 3600 * 1000).toISOString();
+}
+
 async function main() {
-  const [, , cmd, raffleId, montoArg] = process.argv;
+  const [, , cmd, raffleId, argVal] = process.argv;
 
   const uri = process.env.MONGODB_URI;
   if (!uri) {
@@ -63,22 +75,23 @@ async function main() {
     } else {
       console.log(`\n=== ${activos.length} sorteo(s) activo(s) ===\n`);
       for (const r of activos) {
-        console.log(`  id:        ${r.id}`);
-        console.log(`  nombre:    ${r.name}`);
-        console.log(`  tipo:      ${r.raffleType}`);
-        console.log(`  drawDate:  ${r.drawDate ? new Date(r.drawDate).toISOString() : '(sin fecha)'}`);
-        console.log(`  política:  ${politica(r)}`);
+        console.log(`  id:            ${r.id}`);
+        console.log(`  nombre:        ${r.name}`);
+        console.log(`  tipo:          ${r.raffleType}`);
+        console.log(`  drawDate:      ${r.drawDate ? new Date(r.drawDate).toISOString() : '(sin fecha)'}`);
+        console.log(`  cierra ventas: ${cierreVentas(r.drawDate)}  (3 hs antes del draw)`);
+        console.log(`  política:      ${politica(r)}`);
         console.log('');
       }
     }
-    console.log('Para ajustar:  node scripts/ajustar-elegibilidad.js <netwin|cargas|abierto> <raffleId> [monto]\n');
+    console.log('Ajustar:  node scripts/ajustar-elegibilidad.js <netwin|cargas|abierto|fecha> <raffleId> [valor]\n');
     await mongoose.disconnect();
     return;
   }
 
   // --- Modo AJUSTAR --------------------------------------------------
-  if (!['netwin', 'cargas', 'abierto'].includes(cmd)) {
-    console.error(`⛔ Comando inválido: "${cmd}". Usá netwin | cargas | abierto.`);
+  if (!['netwin', 'cargas', 'abierto', 'fecha'].includes(cmd)) {
+    console.error(`⛔ Comando inválido: "${cmd}". Usá netwin | cargas | abierto | fecha.`);
     await mongoose.disconnect();
     process.exit(1);
   }
@@ -98,10 +111,18 @@ async function main() {
   let update;
   if (cmd === 'abierto') {
     update = { minNetLossARS: 0, minCargasARS: 0 };
+  } else if (cmd === 'fecha') {
+    const fecha = new Date(argVal);
+    if (isNaN(fecha.getTime())) {
+      console.error(`⛔ Fecha inválida: "${argVal}". Usá formato ISO, ej: "2026-05-19T00:00:00-03:00".`);
+      await mongoose.disconnect();
+      process.exit(1);
+    }
+    update = { drawDate: fecha };
   } else {
-    const monto = Number(montoArg);
+    const monto = Number(argVal);
     if (!Number.isFinite(monto) || monto < 0) {
-      console.error(`⛔ Monto inválido: "${montoArg}". Tiene que ser un número ≥ 0.`);
+      console.error(`⛔ Monto inválido: "${argVal}". Tiene que ser un número ≥ 0.`);
       await mongoose.disconnect();
       process.exit(1);
     }
@@ -111,12 +132,20 @@ async function main() {
   }
 
   console.log(`\nSorteo: ${r.name}  (id: ${r.id})`);
-  console.log(`  ANTES:    ${politica(r)}`);
+  if (cmd === 'fecha') {
+    console.log(`  ANTES:    drawDate ${r.drawDate ? new Date(r.drawDate).toISOString() : '(sin fecha)'}  · cierra ventas ${cierreVentas(r.drawDate)}`);
+  } else {
+    console.log(`  ANTES:    ${politica(r)}`);
+  }
 
   await raffles.updateOne({ id: raffleId }, { $set: update });
 
   const after = await raffles.findOne({ id: raffleId });
-  console.log(`  DESPUÉS:  ${politica(after)}`);
+  if (cmd === 'fecha') {
+    console.log(`  DESPUÉS:  drawDate ${new Date(after.drawDate).toISOString()}  · cierra ventas ${cierreVentas(after.drawDate)}`);
+  } else {
+    console.log(`  DESPUÉS:  ${politica(after)}`);
+  }
   console.log('\n✅ Listo. El cambio impacta de inmediato en el endpoint de compra.\n');
 
   await mongoose.disconnect();
