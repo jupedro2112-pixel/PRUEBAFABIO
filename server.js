@@ -1345,18 +1345,11 @@ const authMiddleware = async (req, res, next) => {
       return res.status(403).json(VIP_BLOCK_RESPONSE);
     }
 
-    // Bloqueo por fraude: rechazar token de cuenta flaggeada por intento
-    // de estafa (huella de dispositivo duplicada o multi-cuenta por
-    // dispositivo). Excluimos roles staff por las dudas, mismo criterio
-    // que VIP block.
-    if (user.fraudBlocked && !_vipExemptRoles.includes(user.role)) {
-      return res.status(403).json({
-        error: 'Usuario bloqueado por intento de estafa de bono.',
-        message: user.fraudReason || 'Cuenta bloqueada.',
-        code: 'FRAUD_BLOCKED',
-        fraudBlocked: true
-      });
-    }
+    // Bloqueo por fraude DESACTIVADO: las cuentas marcadas `fraudBlocked`
+    // (huella de dispositivo duplicada / multi-cuenta por dispositivo) ya
+    // NO se rechazan en el login. El flag se sigue registrando como dato
+    // de auditoría, pero no impide el uso de la app. Único bloqueo
+    // automático que queda activo en authMiddleware: el de usuarios VIP.
 
     req.user = decoded;
 
