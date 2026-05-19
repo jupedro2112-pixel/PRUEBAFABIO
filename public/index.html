@@ -474,8 +474,7 @@
         #complaintsBookBtn,
         #redeemCodeHomeCard,
         #redeemActiveBanner,
-        #welcomeBonusCard,
-        #userLineVigenteBox {
+        #welcomeBonusCard {
             display: none !important;
         }
 
@@ -2123,13 +2122,15 @@
         #chatScreen.chat-screen:not(.hidden) {
             background: linear-gradient(180deg, #1c1c1c 0%, #0e0e0e 100%) !important;
         }
-        /* Orden vertical COMPACTO (2026-05): saldo → reembolsos →
+        /* Orden vertical COMPACTO (2026-05): saldo → carga → reembolsos →
            comunidad. El título de bienvenida se oculta para que toda la
-           pantalla entre sin scroll. */
+           pantalla entre sin scroll. El botón "carga" (NÚMERO PRINCIPAL)
+           va grande, justo debajo de "Abrir plataforma". */
         #chatScreen .refunds-welcome { display: none !important; }
         #chatScreen .user-balance-card { order: 0 !important; }
-        #chatScreen .header { order: 1 !important; margin-top: 0 !important; }
-        #chatScreen #userCommunityBox { order: 2 !important; }
+        #chatScreen #userLineVigenteBox { order: 1 !important; }
+        #chatScreen .header { order: 2 !important; margin-top: 0 !important; }
+        #chatScreen #userCommunityBox { order: 3 !important; }
 
         /* Badge del usuario — chip negro con borde dorado */
         #refundsLogoutBtn {
