@@ -16955,6 +16955,7 @@ function _renderRafflesAdmin() {
     html += '      <button type="button" onclick="openDrawAllUnifiedModal()" style="background:linear-gradient(135deg,#d4af37,#ff6b00);color:#000;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Un solo número de Lotería para TODOS los sorteos cerrados (pagos + gratis + relámpago) — verificar previo y resumen final">🎰 Sortear TODO juntos</button>';
     html += '      <button type="button" onclick="openFixLotteryModal()" style="background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Corregir ganadores de sorteos ya sorteados con un N° de Lotería equivocado — recalcula con el N° real y avisa a los afectados">🚨 Corregir sorteos</button>';
     html += '      <button type="button" onclick="farewellBroadcast()" style="background:rgba(180,140,255,0.12);color:#c9a8ff;border:1px solid rgba(180,140,255,0.45);padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Manda un push de despedida a TODOS: avisa que fue el último sorteo y que vuelven pronto">📢 Último sorteo</button>';
+    html += '      <button type="button" onclick="deactivateAllRaffles()" style="background:rgba(255,80,80,0.12);color:#ff8080;border:1px solid rgba(255,80,80,0.45);padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Cierra TODOS los sorteos activos: nadie puede entrar más. Reversible, no cancela ni reembolsa.">🛑 Desactivar sorteos</button>';
     // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
     // estaba enterrado en el histórico — ahora va arriba para que el flujo
     // semanal (sortear el lunes nocturna) sea 1 click.
@@ -18702,6 +18703,24 @@ async function farewellBroadcast() {
         const d = await r.json();
         if (r.ok && d.success) {
             alert('✅ Despedida enviada — llegó a ' + (d.sent || 0) + ' usuario(s).');
+        } else {
+            alert('❌ Error: ' + (d.error || ('HTTP ' + r.status)));
+        }
+    } catch (e) {
+        alert('❌ Error de conexión: ' + e.message);
+    }
+}
+
+// Cierra TODOS los sorteos activos (active -> closed). Nadie puede entrar
+// más. No cancela ni reembolsa — es reversible. Pide confirmación.
+async function deactivateAllRaffles() {
+    if (!confirm('Esto CIERRA todos los sorteos activos — nadie va a poder entrar ni comprar número.\n\n(No los cancela ni toca plata. Es reversible.)\n\n¿Confirmás?')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/deactivate-all-active', { method: 'POST' });
+        const d = await r.json();
+        if (r.ok && d.success) {
+            alert('✅ ' + (d.deactivated || 0) + ' sorteo(s) desactivado(s) — cerrados a nuevas entradas.');
+            if (typeof loadRafflesAdmin === 'function') loadRafflesAdmin();
         } else {
             alert('❌ Error: ' + (d.error || ('HTTP ' + r.status)));
         }

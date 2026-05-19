@@ -27116,6 +27116,27 @@ app.post('/api/admin/raffles/farewell-broadcast', authMiddleware, superAdminMidd
   }
 });
 
+// POST /api/admin/raffles/deactivate-all-active — cierra TODOS los sorteos
+// activos (status active -> closed). Frena la participación: nadie más
+// puede entrar ni comprar número. Los sorteos siguen siendo sorteables
+// (podés cargar el ganador igual). NO cancela ni reembolsa nada — es
+// reversible (volver a 'active').
+app.post('/api/admin/raffles/deactivate-all-active', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const before = await Raffle.find({ status: 'active' }, { id: 1, name: 1, _id: 0 }).lean();
+    const result = await Raffle.updateMany({ status: 'active' }, { $set: { status: 'closed' } });
+    logger.info(`[raffles] DEACTIVATE-ALL por ${req.user.username || 'admin'} — ${result.modifiedCount} sorteo(s) active->closed`);
+    res.json({
+      success: true,
+      deactivated: result.modifiedCount,
+      raffles: before.map(r => ({ id: r.id, name: r.name }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/deactivate-all-active: ${err.message}`);
+    res.status(500).json({ error: 'Error desactivando los sorteos.' });
+  }
+});
+
 // POST /api/admin/raffles/seed-lightning — crea el sorteo RELAMPAGO si no hay
 // otro activo. Es free, hero del modal (arriba de todo), inscripcion automatica
 // cuando el user abre la app, 100 cupos. Una sola vez: si se llena o se sortea,
