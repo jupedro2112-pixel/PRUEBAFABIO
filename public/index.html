@@ -2122,8 +2122,11 @@
         #chatScreen.chat-screen:not(.hidden) {
             background: linear-gradient(180deg, #161020 0%, #0c0a14 55%, #0a0810 100%) !important;
         }
-        /* Orden vertical: welcome → reembolsos → comunidad */
-        #chatScreen .refunds-welcome { order: 0 !important; }
+        /* Orden vertical COMPACTO (2026-05): saldo → reembolsos →
+           comunidad. El título de bienvenida se oculta para que toda la
+           pantalla entre sin scroll. */
+        #chatScreen .refunds-welcome { display: none !important; }
+        #chatScreen .user-balance-card { order: 0 !important; }
         #chatScreen .header { order: 1 !important; margin-top: 0 !important; }
         #chatScreen #userCommunityBox { order: 2 !important; }
 
@@ -2152,10 +2155,10 @@
             background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
             border: 1.5px solid #c4b5fd !important;
             color: #ffffff !important;
-            min-height: 92px !important;
-            border-radius: 18px !important;
+            min-height: 78px !important;
+            border-radius: 16px !important;
             box-shadow: 0 0 24px rgba(124,58,237,0.45) !important;
-            margin-bottom: 6px !important;
+            margin-bottom: 4px !important;
         }
         #chatScreen .header-center .refund-btn.monthly {
             background: linear-gradient(135deg, #84cc16 0%, #22d3ee 100%) !important;
@@ -2190,18 +2193,27 @@
             box-shadow: 0 0 18px rgba(34,211,238,0.14) !important;
         }
 
-        /* Tarjeta de saldo — card oscura con borde cian neón, etiqueta
-           "Tu saldo" en cian, monto blanco más chico y en tipografía
-           limpia (sin monospace), botón "Abrir plataforma" en magenta. */
+        /* Tarjeta de saldo COMPACTA (2026-05): "TU SALDO" + monto en UNA
+           sola línea dentro de un recuadro con borde cian neón. El botón
+           "Abrir plataforma" queda DEBAJO, suelto, a todo el ancho.
+           La card en sí no tiene fondo: el recuadro lo da .balance-row-v2. */
         #chatScreen .user-balance-card {
-            background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(124,58,237,0.10)) !important;
-            border: 1.5px solid rgba(34,211,238,0.55) !important;
-            border-radius: 18px !important;
-            box-shadow: 0 0 22px rgba(34,211,238,0.18) !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 10px 14px 4px !important;
+            gap: 8px !important;
         }
         #chatScreen .user-balance-card .balance-row-v2 {
-            flex-direction: column !important;
-            gap: 2px !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            gap: 10px !important;
+            background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(124,58,237,0.10)) !important;
+            border: 1.5px solid rgba(34,211,238,0.55) !important;
+            border-radius: 14px !important;
+            box-shadow: 0 0 22px rgba(34,211,238,0.18) !important;
+            padding: 12px 16px !important;
         }
         #chatScreen .user-balance-card .balance-saldo-label {
             font-size: 11px !important;
@@ -2211,14 +2223,16 @@
             color: #22d3ee !important;
             text-shadow: 0 0 8px rgba(34,211,238,0.6) !important;
             font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
+            flex-shrink: 0 !important;
         }
         #chatScreen .user-balance-card .balance-amount-inline {
-            font-size: clamp(18px, 5vw, 24px) !important;
+            font-size: clamp(17px, 4.6vw, 22px) !important;
             font-weight: 800 !important;
             color: #ffffff !important;
             font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
             letter-spacing: 0.3px !important;
             text-shadow: none !important;
+            text-align: right !important;
         }
         #chatScreen .user-balance-card .platform-btn-cta {
             background: linear-gradient(135deg, #ec4899 0%, #a21caf 100%) !important;
@@ -2226,6 +2240,7 @@
             border-radius: 14px !important;
             font-size: 15px !important;
             box-shadow: 0 0 24px rgba(236,72,153,0.48) !important;
+            padding: 11px 16px !important;
         }
 
         /* Badge con el username (antes era boton Salir; ahora es solo info) */
