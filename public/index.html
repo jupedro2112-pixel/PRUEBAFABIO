@@ -1886,14 +1886,15 @@
             box-shadow: 0 4px 14px rgba(0,0,0,0.30);
         }
 
-        /* Badge con username flotando arriba a la derecha (respeta safe-area).
-           z-index alto para que ningún elemento del flujo lo tape. Antes era
-           el boton de Salir pero se desactivo el logout para evitar que la
-           gente cambie de usuario constantemente. */
+        /* Badge con username flotando arriba a la IZQUIERDA (respeta
+           safe-area). z-index alto para que ningún elemento del flujo lo
+           tape. Antes era el boton de Salir pero se desactivo el logout
+           para evitar que la gente cambie de usuario constantemente.
+           2026-05: movido de derecha → izquierda por pedido del dueño. */
         #refundsLogoutBtn {
             position: fixed;
             top: max(env(safe-area-inset-top), 12px);
-            right: max(env(safe-area-inset-right), 12px);
+            left: max(env(safe-area-inset-left), 12px);
             z-index: 9999;
             cursor: default;
             -webkit-tap-highlight-color: transparent;
@@ -2150,6 +2151,43 @@
         #userCommunityBox.user-community-vigente {
             background: rgba(47,143,230,0.10) !important;
             border: 1.5px solid rgba(47,143,230,0.45) !important;
+        }
+
+        /* Tarjeta de saldo — reformateada (2026-05): card azul a tono con
+           el rediseño, etiqueta "Tu saldo" arriba, monto MÁS CHICO y en
+           tipografía limpia (sin monospace), y botón "Abrir plataforma"
+           en azul (antes violeta). */
+        #chatScreen .user-balance-card {
+            background: linear-gradient(135deg, rgba(47,143,230,0.16), rgba(13,63,126,0.08)) !important;
+            border: 1.5px solid rgba(95,176,240,0.55) !important;
+            border-radius: 16px !important;
+        }
+        #chatScreen .user-balance-card .balance-row-v2 {
+            flex-direction: column !important;
+            gap: 2px !important;
+        }
+        #chatScreen .user-balance-card .balance-saldo-label {
+            font-size: 11px !important;
+            font-weight: 700 !important;
+            letter-spacing: 1.5px !important;
+            text-transform: uppercase !important;
+            color: #9cc8f5 !important;
+            font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
+        }
+        #chatScreen .user-balance-card .balance-amount-inline {
+            font-size: clamp(18px, 5vw, 24px) !important;
+            font-weight: 800 !important;
+            color: #ffffff !important;
+            font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
+            letter-spacing: 0.3px !important;
+            text-shadow: none !important;
+        }
+        #chatScreen .user-balance-card .platform-btn-cta {
+            background: linear-gradient(135deg, #2f8fe6 0%, #1763b8 100%) !important;
+            border: 1.5px solid #5fb0f0 !important;
+            border-radius: 14px !important;
+            font-size: 15px !important;
+            box-shadow: 0 6px 22px rgba(33,120,210,0.40) !important;
         }
         #chatScreen .header-center .refund-btn.weekly .refund-label-full,
         #chatScreen .header-center .refund-btn.monthly .refund-label-full {
@@ -2880,6 +2918,7 @@
              boton "Abrir plataforma" full width. -->
         <div id="userBalanceCard" class="user-balance-card">
             <div class="balance-row-v2">
+                <span class="balance-saldo-label">Tu saldo</span>
                 <span class="balance-amount-inline" id="userBalanceAmount">$0</span>
             </div>
             <button id="goToPlatformBtn" type="button" class="platform-btn-cta">
