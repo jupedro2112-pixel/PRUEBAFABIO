@@ -2107,6 +2107,47 @@
         #chatScreen .header-center .refund-btn.daily .refund-timer {
             color: #4a3e10 !important;
         }
+
+        /* ===================================================================
+           REDISEÑO 2026-05 — pantalla del jugador: azul limpio, botones
+           grandes, reembolsos arriba y comunidad abajo. Va al final para
+           ganarle en especificidad a los estilos de arriba. Reversible. */
+        #chatScreen.chat-screen:not(.hidden) {
+            background: linear-gradient(180deg, #0f3a6b 0%, #081a33 100%) !important;
+        }
+        /* Orden vertical: welcome → reembolsos → comunidad */
+        #chatScreen .refunds-welcome { order: 0 !important; }
+        #chatScreen .header { order: 1 !important; margin-top: 0 !important; }
+        #chatScreen #userCommunityBox { order: 2 !important; }
+        /* Botones de reembolso — grandes y azules */
+        #chatScreen .header-center .refund-btn,
+        #chatScreen .header-center .refund-btn.weekly,
+        #chatScreen .header-center .refund-btn.monthly {
+            background: linear-gradient(135deg, #2f8fe6 0%, #1763b8 100%) !important;
+            border: 1.5px solid #5fb0f0 !important;
+            color: #ffffff !important;
+            min-height: 92px !important;
+            border-radius: 18px !important;
+            box-shadow: 0 6px 22px rgba(33,120,210,0.40) !important;
+            margin-bottom: 6px !important;
+        }
+        #chatScreen .header-center .refund-btn.monthly {
+            background: linear-gradient(135deg, #1763b8 0%, #0d3f7e 100%) !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-label-full,
+        #chatScreen .header-center .refund-btn .refund-amount,
+        #chatScreen .header-center .refund-btn .refund-timer {
+            color: #ffffff !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-amount {
+            font-size: 23px !important;
+            font-weight: 900 !important;
+        }
+        /* Caja de comunidad — acento azul a tono */
+        #userCommunityBox.user-community-vigente {
+            background: rgba(47,143,230,0.10) !important;
+            border: 1.5px solid rgba(47,143,230,0.45) !important;
+        }
         #chatScreen .header-center .refund-btn.weekly .refund-label-full,
         #chatScreen .header-center .refund-btn.monthly .refund-label-full {
             color: #ffffff !important;
