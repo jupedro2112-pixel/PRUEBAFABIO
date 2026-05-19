@@ -77,11 +77,40 @@
                 <span class="icon icon-gamepad"></span>
                 <span>Admin Panel</span>
             </div>
+            <style id="cleanup-2026-hide-nav">
+            /* LIMPIEZA 2026-05: secciones ocultadas del menú del panel.
+               Reversible: para reactivar una sección, quitá su selector de acá. */
+            .sidebar-nav .nav-item[data-section="closings"],
+            .sidebar-nav .nav-item[data-section="cotizaciones"],
+            .sidebar-nav .nav-item[data-section="historialBuffalo"],
+            .sidebar-nav .nav-item[data-section="cotizacionesExterno"],
+            .sidebar-nav .nav-item[data-section="historialCotizacion"],
+            .sidebar-nav .nav-item[data-section="empleados"],
+            .sidebar-nav .nav-item[data-section="redeemCodes"],
+            .sidebar-nav .nav-item[data-section="backupPhones"],
+            .sidebar-nav .nav-item[data-section="notifsHistory"],
+            .sidebar-nav .nav-item[data-section="winback"],
+            .sidebar-nav .nav-item[data-section="campaigns"],
+            .sidebar-nav .nav-item[data-section="reportDaily"],
+            .sidebar-nav .nav-item[data-section="raffles"],
+            .sidebar-nav .nav-item[data-section="rafflesFree"],
+            .sidebar-nav .nav-item[data-section="rafflesLightning"],
+            .sidebar-nav .nav-item[data-section="quiniela"],
+            .sidebar-nav .nav-item[data-section="activePlayers"],
+            .sidebar-nav .nav-item[data-section="fraudBlocks"],
+            .sidebar-nav .nav-item[data-section="reviews"],
+            .sidebar-nav .nav-item[data-section="recontact"],
+            .sidebar-nav .nav-item[data-section="recontactConversions"],
+            .sidebar-nav .nav-item[data-section="encuesta"],
+            .sidebar-nav .nav-item[data-section="complaints"] {
+                display: none !important;
+            }
+            </style>
             <nav class="sidebar-nav">
                 <!-- CIERRES (financiero) — al tope porque es lo que más se usa.
                      Protegido con PIN: data-protected-pin="closings" muestra el
                      modal de clave antes de dejar entrar. Default = 1515. -->
-                <div class="nav-section-title" style="color:#ffd700;border-top:1px solid rgba(255,215,0,0.30);padding-top:10px;margin-top:0;">💰 Cierres</div>
+                <div class="nav-section-title" style="color:#ffd700;border-top:1px solid rgba(255,215,0,0.30);padding-top:10px;margin-top:0;display:none;">💰 Cierres</div>
                 <a href="#" class="nav-item" data-section="closings" data-protected-pin="closings" style="background:rgba(255,215,0,0.10);border-left:3px solid #ffd700;">
                     <span>🔐</span>
                     <span><strong>CIERRES GENERAL</strong></span>
@@ -175,7 +204,7 @@
                     <span>Historial</span>
                 </a>
 
-                <div class="nav-section-title" style="color:#00d4ff;border-top:1px solid rgba(0,212,255,0.30);padding-top:10px;margin-top:10px;">🆕 NUEVO TOP</div>
+                <div class="nav-section-title" style="color:#00d4ff;border-top:1px solid rgba(0,212,255,0.30);padding-top:10px;margin-top:10px;display:none;">🆕 NUEVO TOP</div>
                 <a href="#" class="nav-item" data-section="reviews" style="background:rgba(0,212,255,0.06);border-left:3px solid #00d4ff;">
                     <span>💬</span>
                     <span><strong>Opiniones</strong></span>
@@ -197,7 +226,7 @@
                     <span><strong>Libro de quejas</strong> <span id="complaintsBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;letter-spacing:0.5px;">0</span></span>
                 </a>
 
-                <div class="nav-section-title">🔥 Lo más usado</div>
+                <div class="nav-section-title" style="display:none;">🔥 Lo más usado</div>
                 <a href="#" class="nav-item" data-section="winback">
                     <span>🔄</span>
                     <span>Win-back automático</span>
@@ -225,7 +254,7 @@
                     <span>Reembolsos pendientes</span>
                 </a>
 
-                <div class="nav-section-title">🎫 Sorteos</div>
+                <div class="nav-section-title" style="display:none;">🎫 Sorteos</div>
                 <a href="#" class="nav-item" data-section="raffles">
                     <span>💰</span>
                     <span>Sorteos semanales pagos</span>
@@ -243,7 +272,7 @@
                     <span>Quiniela</span>
                 </a>
 
-                <div class="nav-section-title">🎯 Sobre líneas</div>
+                <div class="nav-section-title" style="display:none;">🎯 Sobre líneas</div>
                 <a href="#" class="nav-item" data-section="activePlayers">
                     <span>🎯</span>
                     <span>Clientes activos sin app</span>
