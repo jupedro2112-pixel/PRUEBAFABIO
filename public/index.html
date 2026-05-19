@@ -456,6 +456,22 @@
             display: none !important;
         }
 
+        /* LIMPIEZA 2026-05: app del jugador reducida — quedan solo reembolso
+           semanal/mensual + comunidad + número vigente. Ocultamos soporte,
+           info, ruleta, total reclamado, banner de notificaciones, opiniones
+           y libro de quejas. Reversible: borrar este bloque. */
+        #supportTopWrap,
+        #infoImportantBtn,
+        #rouletteHomeCard,
+        #rouletteRecentWinnersCard,
+        #notifBanner,
+        #reviewMiniSummary,
+        #reviewFormCard,
+        #giveawayTotalLine,
+        #complaintsBookBtn {
+            display: none !important;
+        }
+
         /* Pantalla principal: layout vertical, mobile-first.
            overflow-y:auto por si el contenido no entra (último botón se
            cortaba). Padding-top reducido + safe-area. */
