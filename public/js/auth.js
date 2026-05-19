@@ -746,17 +746,12 @@ VIP.auth = (function () {
     // Una vez que canjea, el flag se setea en el backend → al refrescar
     // se oculta solo.
     function renderTelegramQuickJoinBtn() {
+        // Limpieza fuerte 2026-05: el botón "📲 Abrir canal de Telegram"
+        // pertenece al flujo de códigos (desactivado). Lo forzamos oculto
+        // siempre para que el JS no lo reabra cuando se carga el /me.
         const btn = document.getElementById('telegramQuickJoinBtn');
         if (!btn) return;
-        const link = (VIP.state.communityLink || VIP.state.communityLink2 || '').trim();
-        const alreadyIn = !!VIP.state.joinedTelegram;
-        const excluded = !!VIP.state.excludedFromCodes;
-        if (link && !alreadyIn && !excluded) {
-            btn.href = link;
-            btn.style.display = 'flex';
-        } else {
-            btn.style.display = 'none';
-        }
+        btn.style.setProperty('display', 'none', 'important');
     }
     // Exponemos al window para que el flow de canje pueda forzar el hide
     // inmediatamente al reclamar OK (sin esperar el próximo /me).
@@ -768,13 +763,16 @@ VIP.auth = (function () {
     // celeste. Si está incluido, los volvemos a mostrar (toggle reversible
     // por si el admin lo cambia mientras el user está abierto).
     function renderRedeemCodeVisibility() {
-        const excluded = !!VIP.state.excludedFromCodes;
+        // Limpieza fuerte 2026-05: el sistema de códigos quedó desactivado
+        // en esta versión. Forzamos ocultar el card, el banner verde de
+        // "código activo" y el news-banner — sin importar el estado de
+        // excludedFromCodes — para que el JS no los reabra inline.
         const card = document.getElementById('redeemCodeHomeCard');
         const banner = document.getElementById('redeemActiveBanner');
         const newsBanner = document.getElementById('telegramNewsBanner');
-        if (card) card.style.setProperty('display', excluded ? 'none' : 'flex', 'important');
-        if (banner && excluded) banner.style.display = 'none';
-        if (newsBanner) newsBanner.style.display = excluded ? 'none' : '';
+        if (card) card.style.setProperty('display', 'none', 'important');
+        if (banner) banner.style.setProperty('display', 'none', 'important');
+        if (newsBanner) newsBanner.style.setProperty('display', 'none', 'important');
     }
     window.renderRedeemCodeVisibility = renderRedeemCodeVisibility;
 
