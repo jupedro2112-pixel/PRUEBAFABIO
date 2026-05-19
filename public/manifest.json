@@ -1,7 +1,7 @@
 {
-  "name": "Reembolsos",
-  "short_name": "Reembolsos",
-  "description": "Reembolsos, bonos y códigos. Reclamá lo tuyo cada día.",
+  "name": "Autodevolución",
+  "short_name": "Devolución",
+  "description": "Devolución de dinero, simple y automática.",
   "id": "/",
   "start_url": "/?source=pwa",
   "display": "standalone",
@@ -36,7 +36,7 @@
       "purpose": "maskable"
     },
     {
-      "src": "/icons/bag-silver-v2.svg",
+      "src": "/icons/bag-silver-v3.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

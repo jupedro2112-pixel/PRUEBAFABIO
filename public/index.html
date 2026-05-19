@@ -120,16 +120,16 @@
     <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id={{META_PIXEL_ID}}&ev=PageView&noscript=1"/></noscript>
     <!-- /META PIXEL -->
 
-    <title>Reembolsos</title>
-    <!-- Ícono de ruleta como favicon SVG (issue #7) -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥈</text></svg>">
+    <title>Devolución</title>
+    <!-- Favicon: bolsa de plata 💰 -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💰</text></svg>">
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Reembolsos">
-    <meta name="application-name" content="Reembolsos">
+    <meta name="apple-mobile-web-app-title" content="Devolución">
+    <meta name="application-name" content="Devolución">
     <meta name="msapplication-TileColor" content="#00ff88">
     <meta name="theme-color" content="#9aa0a6">
     
@@ -2114,14 +2114,14 @@
         }
 
         /* ===================================================================
-           REDISEÑO 2026-05 v2 — "OSCURO VIBRANTE": identidad nueva, NADA que
-           ver con el azul anterior. Fondo casi negro con tinte violeta y
-           acentos neón multicolor (violeta, magenta, cian, lima). Mantiene
-           TODO el contenido (saldo, reembolsos, comunidad) — solo cambia el
-           look. Va al final para ganarle en especificidad. Reversible:
-           borrar este bloque entero vuelve al estilo previo. */
+           REDISEÑO 2026-05 v3 — "CASINO SERIO": paleta sobria de casino
+           online. Fondo negro neutro, dorado como acento premium, verde y
+           rojo para las acciones. Sin rosa ni violeta. Mantiene TODO el
+           contenido (saldo, reembolsos, comunidad) y el layout compacto. Va
+           al final para ganarle en especificidad. Reversible: borrar este
+           bloque entero vuelve al estilo previo. */
         #chatScreen.chat-screen:not(.hidden) {
-            background: linear-gradient(180deg, #161020 0%, #0c0a14 55%, #0a0810 100%) !important;
+            background: linear-gradient(180deg, #1c1c1c 0%, #0e0e0e 100%) !important;
         }
         /* Orden vertical COMPACTO (2026-05): saldo → reembolsos →
            comunidad. El título de bienvenida se oculta para que toda la
@@ -2131,40 +2131,39 @@
         #chatScreen .header { order: 1 !important; margin-top: 0 !important; }
         #chatScreen #userCommunityBox { order: 2 !important; }
 
-        /* Badge del usuario — chip violeta neón (antes borde dorado) */
+        /* Badge del usuario — chip negro con borde dorado */
         #refundsLogoutBtn {
-            background: linear-gradient(135deg, rgba(124,58,237,0.95), rgba(168,85,247,0.95)) !important;
-            border: 1px solid rgba(196,140,255,0.70) !important;
-            box-shadow: 0 0 16px rgba(124,58,237,0.55) !important;
+            background: #1a1a1a !important;
+            border: 1px solid rgba(212,175,55,0.70) !important;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.55) !important;
         }
         #refundsLogoutBtn .logout-username {
-            color: #ffffff !important;
+            color: #d4af37 !important;
             opacity: 1 !important;
         }
 
-        /* Título de bienvenida — blanco con glow violeta */
+        /* Título de bienvenida — blanco sobrio (oculto en layout compacto) */
         #chatScreen .refunds-welcome h2 {
             color: #ffffff !important;
-            text-shadow: 0 0 16px rgba(168,85,247,0.55) !important;
             letter-spacing: 0.5px !important;
         }
 
-        /* Botones de reembolso — grandes y neón. SEMANAL violeta, MENSUAL
-           lima→cian. El MENSUAL usa texto oscuro por contraste. */
+        /* Botones de reembolso — sobrios. SEMANAL verde casino, MENSUAL
+           dorado. El MENSUAL usa texto oscuro por contraste. */
         #chatScreen .header-center .refund-btn,
         #chatScreen .header-center .refund-btn.weekly {
-            background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
-            border: 1.5px solid #c4b5fd !important;
+            background: linear-gradient(135deg, #1e8a3f 0%, #156330 100%) !important;
+            border: 1.5px solid rgba(212,175,55,0.45) !important;
             color: #ffffff !important;
             min-height: 78px !important;
-            border-radius: 16px !important;
-            box-shadow: 0 0 24px rgba(124,58,237,0.45) !important;
+            border-radius: 14px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.45) !important;
             margin-bottom: 4px !important;
         }
         #chatScreen .header-center .refund-btn.monthly {
-            background: linear-gradient(135deg, #84cc16 0%, #22d3ee 100%) !important;
-            border: 1.5px solid #bef264 !important;
-            box-shadow: 0 0 24px rgba(132,204,22,0.42) !important;
+            background: linear-gradient(135deg, #e0bd52 0%, #b8902f 100%) !important;
+            border: 1.5px solid rgba(255,233,170,0.55) !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.45) !important;
         }
         /* Textos del SEMANAL (y default): blancos */
         #chatScreen .header-center .refund-btn .refund-label-full,
@@ -2174,12 +2173,12 @@
             color: #ffffff !important;
             text-shadow: none !important;
         }
-        /* Textos del MENSUAL: oscuros (el fondo lima→cian es claro) */
+        /* Textos del MENSUAL: oscuros (el fondo dorado es claro) */
         #chatScreen .header-center .refund-btn.monthly .refund-label-full,
         #chatScreen .header-center .refund-btn.monthly .refund-label-short,
         #chatScreen .header-center .refund-btn.monthly .refund-amount,
         #chatScreen .header-center .refund-btn.monthly .refund-timer {
-            color: #0c0a14 !important;
+            color: #1a1a1a !important;
             text-shadow: none !important;
         }
         #chatScreen .header-center .refund-btn .refund-amount {
@@ -2187,16 +2186,16 @@
             font-weight: 900 !important;
         }
 
-        /* Caja de comunidad — acento cian neón */
+        /* Caja de comunidad — acento dorado sobrio */
         #userCommunityBox.user-community-vigente {
-            background: rgba(34,211,238,0.08) !important;
-            border: 1.5px solid rgba(34,211,238,0.42) !important;
-            box-shadow: 0 0 18px rgba(34,211,238,0.14) !important;
+            background: rgba(212,175,55,0.06) !important;
+            border: 1.5px solid rgba(212,175,55,0.38) !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.40) !important;
         }
 
         /* Tarjeta de saldo COMPACTA (2026-05): "TU SALDO" + monto en UNA
-           sola línea dentro de un recuadro con borde cian neón. El botón
-           "Abrir plataforma" queda DEBAJO, suelto, a todo el ancho.
+           sola línea dentro de un recuadro negro con borde dorado. El botón
+           "Abrir plataforma" queda DEBAJO, suelto, en rojo casino.
            La card en sí no tiene fondo: el recuadro lo da .balance-row-v2. */
         #chatScreen .user-balance-card {
             background: transparent !important;
@@ -2210,10 +2209,10 @@
             align-items: center !important;
             justify-content: space-between !important;
             gap: 10px !important;
-            background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(124,58,237,0.10)) !important;
-            border: 1.5px solid rgba(34,211,238,0.55) !important;
-            border-radius: 14px !important;
-            box-shadow: 0 0 22px rgba(34,211,238,0.18) !important;
+            background: #161616 !important;
+            border: 1.5px solid rgba(212,175,55,0.55) !important;
+            border-radius: 12px !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.45) !important;
             padding: 12px 16px !important;
         }
         #chatScreen .user-balance-card .balance-saldo-label {
@@ -2221,8 +2220,8 @@
             font-weight: 700 !important;
             letter-spacing: 1.5px !important;
             text-transform: uppercase !important;
-            color: #22d3ee !important;
-            text-shadow: 0 0 8px rgba(34,211,238,0.6) !important;
+            color: #d4af37 !important;
+            text-shadow: none !important;
             font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
             flex-shrink: 0 !important;
         }
@@ -2236,12 +2235,36 @@
             text-align: right !important;
         }
         #chatScreen .user-balance-card .platform-btn-cta {
-            background: linear-gradient(135deg, #ec4899 0%, #a21caf 100%) !important;
-            border: 1.5px solid #f9a8d4 !important;
-            border-radius: 14px !important;
+            background: linear-gradient(135deg, #c0392b 0%, #8a1f16 100%) !important;
+            border: 1.5px solid rgba(212,175,55,0.55) !important;
+            border-radius: 12px !important;
             font-size: 15px !important;
-            box-shadow: 0 0 24px rgba(236,72,153,0.48) !important;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.45) !important;
             padding: 11px 16px !important;
+        }
+
+        /* Comunidad / canal de WhatsApp — más aire y bien centrado.
+           Separa la caja de los reembolsos y reparte el espacio interno
+           para que no se vea todo amontonado arriba. */
+        #chatScreen #userCommunityBox {
+            margin-top: 16px !important;
+            margin-bottom: 16px !important;
+            padding: 18px !important;
+        }
+        #chatScreen #userCommunityBox .community-label {
+            font-size: 13px !important;
+            margin-bottom: 14px !important;
+        }
+        #chatScreen #userCommunityBox .community-link-wrap {
+            justify-content: center !important;
+            margin: 6px 0 !important;
+        }
+        #chatScreen #userCommunityBox .community-link-wrap a {
+            padding: 13px 26px !important;
+            font-size: 15px !important;
+        }
+        #chatScreen #userCommunityBox .community-help {
+            margin-top: 14px !important;
         }
 
         /* Badge con el username (antes era boton Salir; ahora es solo info) */
@@ -2278,25 +2301,20 @@
             content: '👤 ';
         }
 
-        /* Logo: silver más mate (menos brilloso) + SVG monograma centrado. */
+        /* Logo: bolsa de plata (money bag) — sin disco, va directo sobre
+           el fondo del login con una sombra suave. */
         .silver-logo {
-            background: radial-gradient(circle at 32% 28%,
-                #d6d6d6 0%,
-                #a0a0a0 35%,
-                #6a6a6a 75%,
-                #3a3a3a 100%) !important;
-            border: 1px solid #888 !important;
-            box-shadow:
-                0 6px 18px rgba(0, 0, 0, 0.55),
-                inset 0 1px 2px rgba(255, 255, 255, 0.20),
-                inset 0 -1px 2px rgba(0, 0, 0, 0.35) !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
             padding: 0 !important;
-            overflow: hidden;
+            overflow: visible !important;
+            filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.55));
         }
         .silver-logo svg {
             display: block;
-            width: 70%;
-            height: 70%;
+            width: 100%;
+            height: 100%;
             margin: auto;
         }
         /* Título principal: gradiente plata más mate.
@@ -2443,59 +2461,43 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo silver-logo" aria-label="Reembolsos">
+            <div class="login-logo silver-logo" aria-label="Devolución">
                 <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
                     <defs>
-                        <linearGradient id="badgeSilver" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#f5f5f5"/>
-                            <stop offset="35%" stop-color="#d0d0d0"/>
-                            <stop offset="70%" stop-color="#8a8a8a"/>
-                            <stop offset="100%" stop-color="#3e3e3e"/>
+                        <linearGradient id="loginBagSilver" x1="20%" y1="0%" x2="80%" y2="100%">
+                            <stop offset="0%" stop-color="#f7f7f7"/>
+                            <stop offset="40%" stop-color="#d0d0d0"/>
+                            <stop offset="72%" stop-color="#8c8c8c"/>
+                            <stop offset="100%" stop-color="#585858"/>
                         </linearGradient>
-                        <linearGradient id="badgeRim" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" stop-color="#1a1a1a"/>
-                            <stop offset="100%" stop-color="#2e2e2e"/>
+                        <linearGradient id="loginBagTie" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#9c9c9c"/>
+                            <stop offset="100%" stop-color="#454545"/>
                         </linearGradient>
-                        <radialGradient id="badgeShine" cx="32%" cy="28%" r="42%">
-                            <stop offset="0%" stop-color="rgba(255,255,255,0.65)"/>
+                        <radialGradient id="loginBagShine" cx="50%" cy="42%" r="55%">
+                            <stop offset="0%" stop-color="rgba(255,255,255,0.6)"/>
                             <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
                         </radialGradient>
-                        <linearGradient id="textSilver" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#1a1a1a"/>
-                            <stop offset="100%" stop-color="#4a4a4a"/>
-                        </linearGradient>
                     </defs>
-                    <!-- Aro exterior -->
-                    <circle cx="50" cy="50" r="48" fill="url(#badgeRim)"/>
-                    <!-- Disco plateado -->
-                    <circle cx="50" cy="50" r="44" fill="url(#badgeSilver)"/>
-                    <!-- Brillo superior -->
-                    <circle cx="50" cy="50" r="44" fill="url(#badgeShine)"/>
-                    <!-- Símbolo $ grande arriba -->
-                    <text x="50" y="40"
-                          text-anchor="middle"
-                          dominant-baseline="central"
+                    <!-- Cuello fruncido de la bolsa -->
+                    <path d="M36 34 C38 28 37 21 41 17 C43 14.5 46 13.5 50 13.5 C54 13.5 57 14.5 59 17 C63 21 62 28 64 34 Z"
+                          fill="url(#loginBagSilver)" stroke="#2c2c2c" stroke-width="2" stroke-linejoin="round"/>
+                    <!-- Cuerpo de la bolsa -->
+                    <path d="M35 34 C27 42 15 54 15 68 C15 84 31 93 50 93 C69 93 85 84 85 68 C85 54 73 42 65 34 Z"
+                          fill="url(#loginBagSilver)" stroke="#2c2c2c" stroke-width="2" stroke-linejoin="round"/>
+                    <!-- Brillo -->
+                    <ellipse cx="39" cy="57" rx="17" ry="23" fill="url(#loginBagShine)"/>
+                    <!-- Atadura -->
+                    <rect x="30" y="29.5" width="40" height="9.5" rx="4.75" fill="url(#loginBagTie)" stroke="#2c2c2c" stroke-width="1.6"/>
+                    <!-- Pliegue del cuello -->
+                    <path d="M41 24 Q50 20 59 24" fill="none" stroke="#6f6f6f" stroke-width="2" stroke-linecap="round" opacity="0.7"/>
+                    <!-- Signo peso -->
+                    <text x="50" y="67" text-anchor="middle" dominant-baseline="central"
                           font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
-                          font-size="34"
-                          font-weight="900"
-                          fill="url(#textSilver)"
-                          style="letter-spacing:-1px;">$</text>
-                    <!-- Texto REEMBOLSOS curvado abajo -->
-                    <text x="50" y="68"
-                          text-anchor="middle"
-                          dominant-baseline="central"
-                          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
-                          font-size="11"
-                          font-weight="900"
-                          fill="url(#textSilver)"
-                          style="letter-spacing:1px;">REEMBOLSOS</text>
-                    <!-- Líneas decorativas a los costados -->
-                    <line x1="22" y1="78" x2="42" y2="78" stroke="url(#textSilver)" stroke-width="1.2" stroke-linecap="round"/>
-                    <line x1="58" y1="78" x2="78" y2="78" stroke="url(#textSilver)" stroke-width="1.2" stroke-linecap="round"/>
-                    <circle cx="50" cy="78" r="1.5" fill="url(#textSilver)"/>
+                          font-size="37" font-weight="900" fill="#2b2b2b">$</text>
                 </svg>
             </div>
-            <h1 class="silver-title">Reembolsos</h1>
+            <h1 class="silver-title">Devolución</h1>
             <p>Inicia sesión para continuar</p>
             <div class="login-tagline">
                 <div><span class="tagline-icon">✅</span><span><strong>Accedés sin contraseña</strong>, solo con tu usuario.</span></div>
@@ -3206,9 +3208,9 @@
         <div class="user-community-vigente" id="userCommunityBox">
             <!-- Banner "NUEVO CANAL PRIVADO" — pedido del dueño 2026-05-13.
                  Aviso de migración a Telegram. Va arriba del link. -->
-            <div id="telegramNewsBanner" style="background:linear-gradient(135deg,rgba(0,136,204,0.18),rgba(34,160,217,0.10));border:1.5px solid rgba(0,136,204,0.55);border-radius:11px;padding:11px 13px;margin-bottom:10px;text-align:center;box-shadow:0 0 14px rgba(0,136,204,0.25);">
-                <div style="color:#22a0d9;font-weight:900;font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🚀 Nuevo canal privado</div>
-                <div style="color:#fff;font-size:13px;font-weight:800;line-height:1.4;">Unite para recibir <strong style="color:#22a0d9;">ofertas exclusivas</strong>.</div>
+            <div id="telegramNewsBanner" style="background:linear-gradient(135deg,rgba(37,211,102,0.16),rgba(37,211,102,0.05));border:1.5px solid rgba(37,211,102,0.55);border-radius:11px;padding:11px 13px;margin-bottom:14px;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,0.35);">
+                <div style="color:#25d366;font-weight:900;font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🚀 Nuevo canal privado</div>
+                <div style="color:#fff;font-size:13px;font-weight:800;line-height:1.4;">Unite para recibir <strong style="color:#25d366;">ofertas exclusivas</strong>.</div>
             </div>
             <!-- Banner CÓDIGO ACTIVO. JS lo pinta cuando GET /api/redeem-codes/active
                  devuelve active=true y el user todavía no reclamó. Muestra cuenta
@@ -3225,7 +3227,7 @@
               @keyframes redeemActivePulse { 0%,100% { box-shadow:0 0 18px rgba(0,200,150,0.45); } 50% { box-shadow:0 0 32px rgba(0,200,150,0.85); } }
               @keyframes redeemBtnBlink { 0%,100% { box-shadow:0 0 0 rgba(0,200,150,0); transform:scale(1); } 50% { box-shadow:0 0 14px rgba(0,200,150,0.85); transform:scale(1.06); } }
             </style>
-            <span class="community-label">💬 Unite al canal de Telegram</span>
+            <span class="community-label">💬 Unite a nuestro canal de WhatsApp</span>
             <span class="community-link-wrap" id="userCommunityLink"><span class="community-empty">—</span></span>
             <!-- Alerta roja "no te olvides de unirte" — visible solo durante
                  la ventana forzada de 24hs (activada al mandar push de
@@ -3234,7 +3236,7 @@
                 <div style="color:#ff8080;font-weight:900;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🚨 ¡Importante!</div>
                 <div style="color:#fff;font-size:13px;font-weight:800;line-height:1.4;">Unite al nuevo canal privado de Telegram para enterarte de ofertas exclusivas y novedades del servicio.</div>
             </div>
-            <span class="community-help">Tocá el link para sumarte al canal de Telegram.</span>
+            <span class="community-help">Tocá el botón para sumarte al canal de WhatsApp.</span>
         </div>
         <style>@keyframes commForcePulse { 0%,100% { box-shadow:0 0 16px rgba(255,68,68,0.25); } 50% { box-shadow:0 0 26px rgba(255,68,68,0.55); } }</style>
 
