@@ -460,7 +460,10 @@
         /* LIMPIEZA 2026-05: app del jugador reducida — quedan solo reembolso
            semanal/mensual + comunidad + número vigente. Ocultamos soporte,
            info, ruleta, total reclamado, banner de notificaciones, opiniones
-           y libro de quejas. Reversible: borrar este bloque. */
+           y libro de quejas. Reversible: borrar este bloque.
+           ENTRADA LIMPIA: además ocultamos todos los carteles que pueden
+           aparecer apenas el usuario entra (instalá la app, notificaciones,
+           línea caída, test de notifs, recordatorio forzado de comunidad). */
         #supportTopWrap,
         #infoImportantBtn,
         #rouletteHomeCard,
@@ -474,7 +477,11 @@
         #complaintsBookBtn,
         #redeemCodeHomeCard,
         #redeemActiveBanner,
-        #welcomeBonusCard {
+        #welcomeBonusCard,
+        #installHeroCard,
+        #lineChangedAlert,
+        #notifCheckCard,
+        #communityForceReminderBanner {
             display: none !important;
         }
 
