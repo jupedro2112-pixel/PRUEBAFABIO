@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v100-no-logout';
+const CACHE_VERSION = 'v101-bag-silver';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -102,10 +102,10 @@ messaging.onBackgroundMessage(function(payload) {
   const notif = payload.notification || {};
   const webNotif = (payload.webpush && payload.webpush.notification) || {};
 
-  const title = notif.title || webNotif.title || 'Reembolsos';
+  const title = notif.title || webNotif.title || 'Devolución';
   const body  = notif.body  || webNotif.body  || 'Tenés una notificación nueva';
-  const icon  = notif.icon  || webNotif.icon  || '/icons/bag-silver-v2.svg';
-  const badge = notif.badge || webNotif.badge || '/icons/bag-silver-v2.svg';
+  const icon  = notif.icon  || webNotif.icon  || '/icons/icon-192x192.png';
+  const badge = notif.badge || webNotif.badge || '/icons/icon-192x192.png';
   const tag   = (payload.data && payload.data.tag) || 'vipcargasantino';
 
   // Confirmación de entrega: si el envío vino con batchId+userId, avisar al
