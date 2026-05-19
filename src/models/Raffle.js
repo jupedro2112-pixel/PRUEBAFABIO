@@ -134,6 +134,8 @@ const raffleSchema = new mongoose.Schema({
   winningTicketNumber: { type: Number, default: null },
   drawnAt: { type: Date, default: null },
   drawnBy: { type: String, default: null },
+  // Si el sorteo se sorteó pero nadie tenía el número ganador: motivo.
+  noWinnerReason: { type: String, default: null, maxlength: 200 },
 
   // Trazabilidad de la Loteria Nacional.
   lotteryDrawDate: { type: Date, default: null },

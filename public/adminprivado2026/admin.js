@@ -19036,7 +19036,7 @@ async function openDrawAllUnifiedModal() {
                     '<h3 style="margin:0;color:#ffd700;font-size:18px;letter-spacing:1px;">🎰 Sortear TODO juntos · semana pasada</h3>' +
                     '<div style="color:#aaa;font-size:11.5px;margin-top:4px;line-height:1.4;max-width:660px;">' +
                         'UN solo número de Lotería se aplica a TODOS los sorteos <strong style="color:#ffd700;">CLOSED</strong> (pagos + gratis + relámpago). ' +
-                        'Cada sorteo encuentra su ganador con ese número (o mapeo por módulo si no fue vendido). ' +
+                        'Gana quien tenga las últimas 3 cifras de ese número; si nadie lo compró, el sorteo queda sin ganador. ' +
                         'Primero <strong>Verificás todo</strong>, después <strong>sorteás todos</strong> con un click.' +
                     '</div>' +
                 '</div>' +

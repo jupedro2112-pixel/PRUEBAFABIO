@@ -22511,7 +22511,7 @@ const FREE_RAFFLE_TYPE_SET = new Set([
   'free_p2m', 'free_p1m', 'free_p500', 'free_p100'
 ]);
 
-const RAFFLE_LOTTERY_RULE = '1° premio de la Lotería Nacional Nocturna del lunes próximo. Resultado oficial publicado por Lotería Nacional — verificable. Si el número sale fuera del rango vendido, se cicla al rango vendido por módulo.';
+const RAFFLE_LOTTERY_RULE = '1° premio de la Lotería Nacional Nocturna del lunes próximo. Resultado oficial publicado por Lotería Nacional — verificable. Gana quien tenga las últimas 3 cifras del 1° premio. Si nadie compró ese número, el sorteo queda sin ganador.';
 
 // Devuelve un Date corrido a TZ Argentina (UTC-3, sin DST) para hacer
 // calculos de dia/semana en hora local sin librerias externas.
@@ -25525,28 +25525,27 @@ async function _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner) {
   soldNumbers.sort((a, b) => a - b);
   if (soldNumbers.length === 0) return { error: 'No hay números asignados a participantes.' };
 
-  let mappedNumber;
-  let wasMapped;
-  if (soldNumbers.includes(lotteryNumber)) {
-    mappedNumber = lotteryNumber;
-    wasMapped = false;
-  } else {
-    const idx = ((lotteryNumber - 1) % soldNumbers.length + soldNumbers.length) % soldNumbers.length;
-    mappedNumber = soldNumbers[idx];
-    wasMapped = true;
-  }
-  let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
+  // Número ganador = últimas 3 cifras del 1er premio de la Lotería.
+  // Ej: lotería 7342 → gana el #342. "000" se interpreta como 1000.
+  let winningNumber = ((lotteryNumber % 1000) + 1000) % 1000;
+  if (winningNumber === 0) winningNumber = 1000;
+
+  // Coincidencia EXACTA: gana SOLO quien compró ese número. Sin ciclado.
+  let mappedNumber = winningNumber;
+  let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.some(n => Number(n) === winningNumber));
   if (explicitWinner) {
     const found = parts.find(p => p.username.toLowerCase() === String(explicitWinner).toLowerCase());
     if (!found) return { error: `El usuario "${explicitWinner}" no participa en este sorteo.` };
     winner = found;
     if (Array.isArray(found.ticketNumbers) && found.ticketNumbers.length > 0) {
       mappedNumber = Number(found.ticketNumbers[0]);
-      wasMapped = (mappedNumber !== lotteryNumber);
     }
   }
-  if (!winner) return { error: `No se encontró ganador para el número ${mappedNumber}.` };
-  return { parts, totalCuposSold, soldNumbers, mappedNumber, wasMapped, winner };
+  if (!winner) {
+    // Nadie compró el número ganador → sorteo SIN ganador.
+    return { parts, totalCuposSold, soldNumbers, winningNumber, noWinner: true };
+  }
+  return { parts, totalCuposSold, soldNumbers, mappedNumber, wasMapped: false, winner };
 }
 
 // POST /api/admin/raffles/:id/preview-draw
@@ -25565,6 +25564,17 @@ app.post('/api/admin/raffles/:id/preview-draw', authMiddleware, adminMiddleware,
     const explicitWinner = String((req.body && req.body.winnerUsername) || '').trim();
     const calc = await _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner);
     if (calc.error) return res.status(400).json({ error: calc.error });
+    if (calc.noWinner) {
+      return res.json({
+        success: true,
+        noWinner: true,
+        winningNumber: calc.winningNumber,
+        lotteryNumber,
+        totalCuposSold: calc.totalCuposSold,
+        soldNumbers: calc.soldNumbers,
+        message: `Sin ganador: nadie compró el número ${calc.winningNumber}. No se entrega premio.`
+      });
+    }
     const { winner, mappedNumber, wasMapped, totalCuposSold, soldNumbers } = calc;
 
     // Lightning gate (solo informativo en preview — no marca forfeit).
@@ -25624,9 +25634,9 @@ app.post('/api/admin/raffles/:id/preview-draw', authMiddleware, adminMiddleware,
 
 // POST /api/admin/raffles/:id/draw
 // El admin carga (a) lotteryNumber: numero crudo de la Loteria Nacional
-// Nocturna (1er premio); el sistema mapea por modulo si el cupo esta
-// incompleto y busca al ganador por su ticketNumbers. Opcional:
-// (b) winnerUsername para forzar/confirmar el ganador.
+// Nocturna (1er premio); el sistema toma las ultimas 3 cifras y gana SOLO
+// quien compro ese numero exacto. Si nadie lo compro, el sorteo queda sin
+// ganador. Opcional: (b) winnerUsername para forzar/confirmar el ganador.
 app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const raffle = await Raffle.findOne({ id: req.params.id });
@@ -25648,11 +25658,10 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     for (const p of parts) totalCuposSold += (p.cuposCount || 1);
     if (totalCuposSold === 0) return res.status(400).json({ error: 'No hay cupos vendidos.' });
 
-    // Mapeo loteria -> ticket vendido. Los users eligen su numero del 1..100,
-    // asi que los vendidos pueden ser dispersos (ej. [3, 7, 12, 33, 41]).
-    // Construimos la lista real de tickets vendidos y mapeamos por modulo
-    // al INDICE en esa lista, no al numero crudo. Asi cumplimos la regla
-    // "si la loteria sale fuera del rango vendido, cicla al rango vendido".
+    // Número ganador = últimas 3 cifras del 1er premio de la Lotería Nacional.
+    // Ej: lotería 7342 → gana el #342. "000" se interpreta como 1000.
+    // Coincidencia EXACTA: gana SOLO quien compró ese número. Sin ciclado —
+    // si nadie lo tiene, el sorteo queda SIN ganador y no se entrega premio.
     const soldNumbers = [];
     for (const p of parts) {
       if (Array.isArray(p.ticketNumbers)) {
@@ -25663,38 +25672,60 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     if (soldNumbers.length === 0) {
       return res.status(400).json({ error: 'No hay numeros asignados a participantes (data inconsistente).' });
     }
-    let mappedNumber;
-    let wasMapped;
-    if (soldNumbers.includes(lotteryNumber)) {
-      // El numero crudo salio y es uno vendido — ganador directo.
-      mappedNumber = lotteryNumber;
-      wasMapped = false;
-    } else {
-      // Cicla a un ticket vendido por modulo sobre la cantidad de vendidos.
-      const idx = ((lotteryNumber - 1) % soldNumbers.length + soldNumbers.length) % soldNumbers.length;
-      mappedNumber = soldNumbers[idx];
-      wasMapped = true;
-    }
-    let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
+
+    let winningNumber = ((lotteryNumber % 1000) + 1000) % 1000;
+    if (winningNumber === 0) winningNumber = 1000;
+
+    const wasMapped = false;
+    let mappedNumber = winningNumber;
+    let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.some(n => Number(n) === winningNumber));
     if (explicitWinner) {
       const found = parts.find(p => p.username.toLowerCase() === explicitWinner.toLowerCase());
       if (!found) return res.status(400).json({ error: `El usuario "${explicitWinner}" no participa en este sorteo.` });
       winner = found;
-      // Si forzamos ganador, fijamos mappedNumber a uno de SUS tickets para
-      // que el push y el detalle muestren un numero coherente.
       if (Array.isArray(found.ticketNumbers) && found.ticketNumbers.length > 0) {
         mappedNumber = Number(found.ticketNumbers[0]);
-        wasMapped = (mappedNumber !== lotteryNumber);
       }
-    }
-    if (!winner) {
-      return res.status(500).json({ error: `No se encontró ganador para el número ${mappedNumber}.` });
     }
 
     let lotteryDrawDate = null;
     if (lotteryDrawDateRaw) {
       const d = new Date(lotteryDrawDateRaw);
       if (!isNaN(d.getTime())) lotteryDrawDate = d;
+    }
+
+    // Sin ganador: nadie compró el número que salió. Se marca el sorteo como
+    // sorteado (drawn) SIN ganador y sin premio — no se acredita nada.
+    if (!winner) {
+      const noWinLock = await Raffle.findOneAndUpdate(
+        { id: raffle.id, status: { $in: ['active', 'closed'] }, winnerUsername: null },
+        { $set: {
+            status: 'drawn',
+            winnerUsername: null,
+            winningTicketNumber: winningNumber,
+            lotteryDrawNumber: lotteryNumber,
+            drawnAt: new Date(),
+            drawnBy: req.user.username || 'admin',
+            prizeClaimable: false,
+            noWinnerReason: `Nadie compró el número ${winningNumber}.`,
+            ...(lotteryDrawSource ? { lotteryDrawSource } : {}),
+            ...(lotteryDrawDate ? { lotteryDrawDate } : {})
+        }},
+        { new: true }
+      );
+      if (!noWinLock) {
+        return res.status(409).json({ error: 'Este sorteo ya fue sorteado por otra sesión. Recargá el panel.' });
+      }
+      try { await _ensureActiveRafflesSeeded(); } catch (_) {}
+      logger.info(`[raffles] DRAW SIN GANADOR — ${raffle.name} lottery=${lotteryNumber} num=${winningNumber} (no vendido)`);
+      return res.json({
+        success: true,
+        noWinner: true,
+        winningTicketNumber: winningNumber,
+        lotteryDrawNumber: lotteryNumber,
+        totalCuposSold,
+        message: `Sin ganador: nadie compró el número ${winningNumber}. No se entrega premio.`
+      });
     }
 
     // Lock atomico: solo el primer caller que vea status active/closed Y
@@ -26301,7 +26332,8 @@ app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, 
             results.drawn.push({
               raffleId,
               name: existing.name,
-              winner: d.winnerUsername,
+              noWinner: !!d.noWinner,
+              winner: d.winnerUsername || null,
               ticket: d.winningTicketNumber,
               prize: d.prizeValueARS,
               autoCredited: !!d.prizeAutoCredited,
@@ -26353,6 +26385,19 @@ app.post('/api/admin/raffles/diagnose-lottery', authMiddleware, superAdminMiddle
           report.push({
             id: r.id, name: r.name, error: calc.error,
             currentWinner: r.winnerUsername, currentNumber: r.winningTicketNumber
+          });
+          continue;
+        }
+        if (calc.noWinner) {
+          // Con el número correcto, este sorteo no tendría ganador.
+          report.push({
+            id: r.id, name: r.name, emoji: r.emoji, raffleType: r.raffleType,
+            prize: r.prizeValueARS || 0, drawnAt: r.drawnAt,
+            currentWinner: r.winnerUsername, currentNumber: r.winningTicketNumber,
+            computedWinner: null, computedNumber: calc.winningNumber,
+            wasMapped: false, isMismatch: true,
+            isClaimed: !!r.prizeClaimedAt, claimedAt: r.prizeClaimedAt || null,
+            prizeClaimable: !!r.prizeClaimable, totalCuposSold: calc.totalCuposSold
           });
           continue;
         }
@@ -26434,6 +26479,15 @@ app.post('/api/admin/raffles/fix-lottery', authMiddleware, superAdminMiddleware,
         const oldNumber = raffle.winningTicketNumber;
         const calc = await _computeRaffleDrawWinner(raffle, lotteryNumber, null);
         if (calc.error) { results.failed.push({ raffleId: rid, name: raffle.name, error: calc.error }); continue; }
+        if (calc.noWinner) {
+          // Con el número correcto este sorteo no tiene ganador. No se
+          // remueve el ganador automáticamente — queda para revisión manual.
+          results.skipped.push({
+            raffleId: rid, name: raffle.name, reason: 'computed_no_winner',
+            oldWinner: raffle.winnerUsername, computedNumber: calc.winningNumber
+          });
+          continue;
+        }
         const newWinner = calc.winner.username;
         const newNumber = calc.mappedNumber;
         if (String(newWinner || '').toLowerCase() === String(oldWinner || '').toLowerCase()) {
