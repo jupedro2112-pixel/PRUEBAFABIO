@@ -2266,6 +2266,10 @@
         /* Sorteo semanal banner abajo del bono */
         #raffleWinnerHomeBanner {
             order: 4 !important;
+            /* Sección de sorteos OCULTADA del lado jugador (cierre 2026-05).
+               Los datos y el panel admin quedan intactos. Para reactivar,
+               quitar esta regla display:none y el display:none de #rafflesBtn. */
+            display: none !important;
         }
 
         /* Username badge fijo arriba a la derecha (vuelve al diseño previo
@@ -2569,7 +2573,7 @@
                     🎰 CASINO
                 </button>
                 <!-- BOTÓN SORTEOS - Sorteos mensuales -->
-                <button id="rafflesBtn" class="plataforma-btn" title="Sorteos mensuales" onclick="VIP.raffles && VIP.raffles.open()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;">
+                <button id="rafflesBtn" class="plataforma-btn" title="Sorteos mensuales" onclick="VIP.raffles && VIP.raffles.open()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;display:none;">
                     🎁 SORTEOS
                 </button>
                 <!-- BOTÓN CANAL INFORMATIVO - URL configurable desde admin -->
