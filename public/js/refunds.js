@@ -711,6 +711,20 @@ VIP.refunds = (function () {
     }
 
     function renderWelcomeBonusCard() {
+        // Limpieza fuerte 2026-05: bono de bienvenida $5.000 desactivado.
+        // Forzamos ocultar el card SIEMPRE, sin importar el estado del
+        // backend, y matamos también el installHeroCard que es su gemelo
+        // ("BONO POR INSTALAR $5.000"). Saltaban como cartel al entrar
+        // porque la JS setea display inline con !important y le gana al
+        // CSS. Para reactivar, sacar el early-return de abajo.
+        try {
+            const card = document.getElementById('welcomeBonusCard');
+            if (card) card.style.setProperty('display', 'none', 'important');
+            const hero = document.getElementById('installHeroCard');
+            if (hero) { hero.hidden = true; hero.style.setProperty('display', 'none', 'important'); }
+        } catch (_) {}
+        return;
+
         const card = document.getElementById('welcomeBonusCard');
         const amountEl = document.getElementById('welcomeBonusAmount');
         const subtitleEl = document.getElementById('welcomeBonusSubtitle');
@@ -1031,6 +1045,16 @@ VIP.refunds = (function () {
     }
 
     function renderGiveawayCard() {
+        // Limpieza fuerte 2026-05: card 'REGALO ACTIVO' desactivado.
+        // Forzamos ocultar siempre y limpiamos cualquier countdown que
+        // hubiera quedado corriendo. Para reactivar, sacar el return.
+        try {
+            const card = document.getElementById('giveawayCard');
+            if (card) card.style.setProperty('display', 'none', 'important');
+            _clearGiveawayCountdown();
+        } catch (_) {}
+        return;
+
         const card = document.getElementById('giveawayCard');
         if (!card) return;
         const hide = () => card.style.setProperty('display', 'none', 'important');
