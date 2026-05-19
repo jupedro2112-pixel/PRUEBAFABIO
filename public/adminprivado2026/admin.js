@@ -21047,6 +21047,26 @@ async function deleteAdminReview(id, username) {
     }
 }
 
+// Borra TODAS las opiniones de una. Doble confirmación porque no se
+// puede deshacer. Pensado para limpiar el historial al reutilizar la
+// cuenta para otro cliente.
+async function deleteAllAdminReviews() {
+    if (!confirm('¿Borrar TODAS las opiniones? Esta acción no se puede deshacer.')) return;
+    if (!confirm('Confirmá de nuevo: se eliminan TODAS las reseñas de la base de datos.')) return;
+    try {
+        const r = await authFetch('/api/admin/reviews', { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'No se pudo borrar'), 'error');
+            return;
+        }
+        showToast('✅ ' + (d.deleted || 0) + ' opiniones borradas', 'success');
+        loadAdminReviews();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 function _renderAdminReviewsStars(n) {
     const v = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
     let html = '';

@@ -16394,6 +16394,21 @@ app.delete('/api/admin/reviews/:id', authMiddleware, superAdminMiddleware, async
   }
 });
 
+// DELETE /api/admin/reviews — borra TODAS las opiniones de una sola vez
+// (solo admin principal). Pensado para limpiar el historial cuando se
+// reutiliza la cuenta para otro cliente. Los users quedan libres para
+// volver a opinar (no se recrea ningún constraint).
+app.delete('/api/admin/reviews', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const r = await Review.deleteMany({});
+    logger.info(`[REVIEW-DELETE-ALL] ${r.deletedCount || 0} opiniones borradas por ${req.user.username}`);
+    res.json({ success: true, deleted: r.deletedCount || 0 });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/reviews (all): ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // =====================================================================
 // WIN-BACK AUTOMÁTICO (estrategia de recuperación)
 // Cron horario: si isActive, escanea PlayerStats.lastRealDepositDate y
