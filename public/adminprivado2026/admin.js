@@ -16954,6 +16954,7 @@ function _renderRafflesAdmin() {
     html += '      <button type="button" onclick="testPushAllToUser()" style="background:rgba(102,255,255,0.10);color:#66ffff;border:1px solid rgba(102,255,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar el push de GANASTE de TODOS los sorteos activos a un user de prueba (ej. lalodj)">🧪 Test masivo a usuario</button>';
     html += '      <button type="button" onclick="openDrawAllUnifiedModal()" style="background:linear-gradient(135deg,#d4af37,#ff6b00);color:#000;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Un solo número de Lotería para TODOS los sorteos cerrados (pagos + gratis + relámpago) — verificar previo y resumen final">🎰 Sortear TODO juntos</button>';
     html += '      <button type="button" onclick="openFixLotteryModal()" style="background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Corregir ganadores de sorteos ya sorteados con un N° de Lotería equivocado — recalcula con el N° real y avisa a los afectados">🚨 Corregir sorteos</button>';
+    html += '      <button type="button" onclick="farewellBroadcast()" style="background:rgba(180,140,255,0.12);color:#c9a8ff;border:1px solid rgba(180,140,255,0.45);padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Manda un push de despedida a TODOS: avisa que fue el último sorteo y que vuelven pronto">📢 Último sorteo</button>';
     // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
     // estaba enterrado en el histórico — ahora va arriba para que el flujo
     // semanal (sortear el lunes nocturna) sea 1 click.
@@ -18686,6 +18687,29 @@ async function seedTestRaffle() {
 
 // Picker: lista los sorteos active/closed (vivos) y deja al admin elegir
 // uno para anunciar. Util cuando quiere reanunciar dias despues.
+// Manda el push de despedida ("fue el último sorteo, volvemos pronto") a
+// todos los usuarios con la app. Pide confirmación porque va a TODOS.
+async function farewellBroadcast() {
+    const title = 'Gracias por participar 🙏';
+    const body = 'Este fue nuestro último sorteo por ahora. Gracias a todos los que participaron. Estamos trabajando para volver pronto con algo nuevo. 💛';
+    if (!confirm('Esto manda un push a TODOS los usuarios con la app instalada:\n\n' + title + '\n' + body + '\n\n¿Confirmás el envío?')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/farewell-broadcast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, body })
+        });
+        const d = await r.json();
+        if (r.ok && d.success) {
+            alert('✅ Despedida enviada — llegó a ' + (d.sent || 0) + ' usuario(s).');
+        } else {
+            alert('❌ Error: ' + (d.error || ('HTTP ' + r.status)));
+        }
+    } catch (e) {
+        alert('❌ Error de conexión: ' + e.message);
+    }
+}
+
 async function announceRafflePicker() {
     let modal = document.getElementById('announcePickerModal');
     if (modal) modal.remove();

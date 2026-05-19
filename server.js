@@ -27068,6 +27068,41 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
   }
 });
 
+// POST /api/admin/raffles/farewell-broadcast — push de despedida a TODOS.
+// Avisa que el programa de sorteos cerró ("fue el último, volvemos pronto").
+// A diferencia de /announce, NO depende de ningún sorteo ni de su estado.
+app.post('/api/admin/raffles/farewell-broadcast', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const title = String(b.title || 'Gracias por participar 🙏').slice(0, 100).trim();
+    const body = String(
+      b.body ||
+      'Este fue nuestro último sorteo por ahora. Gracias a todos los que participaron. Estamos trabajando para volver pronto con algo nuevo. 💛'
+    ).slice(0, 500).trim();
+    if (!title || !body) return res.status(400).json({ error: 'Faltan title y/o body.' });
+    // Solo a usuarios con la PWA instalada (mismo criterio que /announce).
+    const userFilter = {
+      $or: [
+        { fcmTokenContext: 'standalone' },
+        { 'fcmTokens.context': 'standalone' }
+      ]
+    };
+    const result = await sendNotificationToAllUsers(
+      User, title, body, { source: 'raffles-farewell' }, userFilter
+    );
+    logger.info(`[raffles] FAREWELL-BROADCAST por ${req.user.username || 'admin'} sent=${(result && result.successCount) || 0}`);
+    res.json({
+      success: true,
+      sent: (result && result.successCount) || 0,
+      failed: (result && result.failureCount) || 0,
+      eligible: (result && result.totalSent) || 0
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/farewell-broadcast: ${err.message}`);
+    res.status(500).json({ error: 'Error enviando la despedida.' });
+  }
+});
+
 // POST /api/admin/raffles/seed-lightning — crea el sorteo RELAMPAGO si no hay
 // otro activo. Es free, hero del modal (arriba de todo), inscripcion automatica
 // cuando el user abre la app, 100 cupos. Una sola vez: si se llena o se sortea,
