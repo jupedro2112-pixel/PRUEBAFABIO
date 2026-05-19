@@ -22,6 +22,11 @@
     }
 
     async function loadActive() {
+        // Limpieza fuerte 2026-05: test de notificaciones del admin
+        // desactivado del lado del player (#notifCheckCard oculto).
+        // Saltamos el fetch para no pegarle al backend al pedo.
+        try { const c = document.getElementById('notifCheckCard'); if (c) c.style.display = 'none'; } catch (_) {}
+        return;
         if (!VIP.state || !VIP.state.currentToken) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/notif-check/active`, {

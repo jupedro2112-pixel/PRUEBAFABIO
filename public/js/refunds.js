@@ -682,6 +682,9 @@ VIP.refunds = (function () {
     }
 
     async function loadWelcomeBonusStatus() {
+        // Limpieza fuerte 2026-05: bono $5.000 desactivado. Saltamos el
+        // fetch — renderWelcomeBonusCard() ya hace early-return igual.
+        return;
         // Si ya quedo marcado como reclamado en este device, asumimos
         // claimed=true sin esperar al server (UX: no parpadea el card).
         // El backend sigue siendo la fuente de verdad real, pero esto
@@ -981,6 +984,10 @@ VIP.refunds = (function () {
     }
 
     async function loadGiveawayStatus() {
+        // Limpieza fuerte 2026-05: regalo activo desactivado en el home.
+        // No tiene sentido hacer el fetch — el card está oculto y
+        // renderGiveawayCard() es un no-op.
+        return;
         try {
             if (!VIP.state.currentToken) return;
             const r = await fetch(`${VIP.config.API_URL}/api/money-giveaway/active`, {
@@ -998,6 +1005,9 @@ VIP.refunds = (function () {
     // Total historico de plata regalada via giveaway. Lo muestra el home
     // como prueba social: "Total regalada a usuarios con app+notifs: $X".
     async function loadGiveawayTotal() {
+        // Limpieza fuerte 2026-05: línea "Total regalada" oculta por el
+        // cleanup (#giveawayTotalLine en hide list). No fetch necesario.
+        return;
         try {
             if (!VIP.state.currentToken) return;
             const r = await fetch(`${VIP.config.API_URL}/api/giveaway-stats/total`, {

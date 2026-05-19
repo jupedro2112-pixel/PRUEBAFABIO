@@ -111,6 +111,10 @@ VIP.ui = (function () {
     // modificarlo desde el mismo lugar. Importante pero no obligatorio.
     let _backupPhoneInited = false;
     async function setupBackupPhoneChip() {
+        // Limpieza fuerte 2026-05: tarjeta "Tu línea (opcional)" oculta del
+        // home (#backupPhoneCard). No tiene sentido inicializarla ni
+        // hacer el fetch a /api/user/backup-phone.
+        return;
         const card   = document.getElementById('backupPhoneCard');
         const input  = document.getElementById('backupPhoneCardInput');
         const save   = document.getElementById('backupPhoneCardSave');
@@ -1014,7 +1018,13 @@ if (VIP.ui.isAppStandalone()) {
 // El render se ejecuta al cargar, cada vez que la app vuelve al foreground
 // (visibilitychange) y cuando llega el evento appinstalled.
 (function setupInstallHeroCard() {
+    // Limpieza fuerte 2026-05: card "BONO POR INSTALAR $5.000" desactivada
+    // (refunds.js + CSS la ocultan en la raíz). No tiene sentido seguir
+    // armando el render ni los event listeners. Para reactivar: sacar el
+    // return de abajo.
     const card = document.getElementById('installHeroCard');
+    if (card) { card.hidden = true; card.style.setProperty('display', 'none', 'important'); }
+    return;
     if (!card) return;
 
     const isInApp     = () => VIP.ui.isAppStandalone();

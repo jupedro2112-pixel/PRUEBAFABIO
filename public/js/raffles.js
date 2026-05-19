@@ -1181,6 +1181,11 @@ VIP.raffles = (function () {
     // reclamar (si auto-credit fallo). Si el ganador es otro, mostramos
     // un banner mas chico con "ultimo ganador: @user $X" para social proof.
     async function loadHomeWinnerBanner() {
+        // Limpieza fuerte 2026-05: banner de "ultimo ganador" del home
+        // desactivado. La sección de sorteos está oculta del player y
+        // #raffleWinnerHomeBanner queda hidden por CSS.
+        try { const c = document.getElementById('raffleWinnerHomeBanner'); if (c) { c.style.display = 'none'; c.innerHTML = ''; } } catch (_) {}
+        return;
         const container = document.getElementById('raffleWinnerHomeBanner');
         if (!container) return;
         let winners = [], lightning = null, homeBalance = null;
