@@ -780,6 +780,11 @@ VIP.auth = (function () {
     // desbloqueó/restringió al user. Modal grande estilo encuesta que el
     // user tiene que tocar "ENTENDIDO" para cerrar (POST al backend).
     function renderUnblockNotice() {
+        // Limpieza fuerte 2026-05: alerta "AVISO IMPORTANTE / no cambies
+        // de sesión" desactivada. No la queremos saltando al entrar.
+        // Si la queremos de vuelta, sacar este return.
+        try { const e = document.getElementById('unblockNoticeOverlay'); if (e) e.remove(); } catch (_) {}
+        return;
         const should = !!VIP.state.showUnblockNotice;
         const existing = document.getElementById('unblockNoticeOverlay');
         if (!should) { if (existing) existing.remove(); return; }
@@ -822,6 +827,10 @@ VIP.auth = (function () {
     // username. Si el modal de desbloqueo ya va a aparecer, se omite (mismo
     // mensaje, no duplicar).
     function showStartupAvisoOnce() {
+        // Limpieza fuerte 2026-05: alerta "AVISO IMPORTANTE / no cambies
+        // de sesión" desactivada — saltaba en cada login.
+        try { const e = document.getElementById('startupAvisoOverlay'); if (e) e.remove(); } catch (_) {}
+        return;
         const username = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '';
         if (!username) return;
         if (VIP.state && VIP.state.showUnblockNotice) return;
@@ -892,6 +901,11 @@ VIP.auth = (function () {
     // Si la comunidad está marcada DOWN, se muestra siempre hasta que
     // toque el link de la nueva (variante "comunidad cambió").
     function showCommunityJoinAlert() {
+        // Limpieza fuerte 2026-05: alerta "Unite a nuestra nueva comunidad"
+        // / "Nos mudamos a Telegram" desactivada — saltaba al entrar.
+        // El link a comunidad sigue visible en el home (#userCommunityBox).
+        try { const e = document.getElementById('communityJoinAlert'); if (e) e.remove(); } catch (_) {}
+        return;
         const link = VIP.state.communityLink;
         const status = VIP.state.communityStatus || 'active';
         const label = VIP.state.communityLabel || '';

@@ -494,6 +494,22 @@
             display: none !important;
         }
 
+        /* ============================================================
+           LIMPIEZA DEFINITIVA 2026-05 (whitelist del home del jugador):
+           En #chatScreen SOLO se muestran las 5 cajas pactadas:
+             · #refundsLogoutBtn  (badge del username)
+             · .header             (botones de reembolso)
+             · #userBalanceCard    (saldo + Abrir plataforma)
+             · #userLineVigenteBox (botón QUIERO CARGAR)
+             · #userCommunityBox   (canal de WhatsApp)
+           Cualquier otro hijo directo de #chatScreen — sea card, banner,
+           alerta o modal interno — queda oculto. Si más adelante se agrega
+           algo nuevo al home, NO aparece como "cartel" sin que nosotros
+           lo saquemos a propósito de este :not(). Reversible. */
+        #chatScreen.chat-screen:not(.hidden) > *:not(#refundsLogoutBtn):not(.header):not(#userBalanceCard):not(#userLineVigenteBox):not(#userCommunityBox) {
+            display: none !important;
+        }
+
         /* Pantalla principal: layout vertical, mobile-first.
            overflow-y:auto por si el contenido no entra (último botón se
            cortaba). Padding-top reducido + safe-area. */
