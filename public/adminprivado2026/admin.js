@@ -1497,7 +1497,7 @@ async function saveUserCommunities() {
     const notifyEl = document.getElementById('uc_notifyOnChange');
     const broadcastOnChange = notifyEl ? !!notifyEl.checked : true;
     const broadcastTitle = (document.getElementById('uc_notifTitle')?.value || '').trim()
-        || '🚀 Nuevo canal de Telegram';
+        || '🚀 Nuevo canal de WhatsApp';
     const broadcastBody = (document.getElementById('uc_notifBody')?.value || '').trim()
         || 'Unite al nuevo canal — a las 23:00 hs publicamos un código para reclamar plata gratis 💸';
 
@@ -29243,7 +29243,7 @@ function _renderRedeemCodes() {
     h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:7px;"><input id="rcSendNotif" type="checkbox" checked> <span style="color:#00d4ff;font-weight:800;font-size:12px;">📲 Mandar notif con info del código</span></label>';
     h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:7px;margin-bottom:7px;">';
     h += '<input id="rcNotifTitle" type="text" placeholder="Título notif" maxlength="80" value="🎁 ¡Código nuevo en Telegram!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
-    h += '<input id="rcNotifBody" type="text" placeholder="Texto del aviso" maxlength="250" value="Sumate al canal privado de Telegram para ver el código y canjearlo en la app. ¡Lo dejamos por tiempo limitado!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;">';
+    h += '<input id="rcNotifBody" type="text" placeholder="Texto del aviso" maxlength="250" value="Sumate al canal privado de WhatsApp para ver el código y canjearlo en la app. ¡Lo dejamos por tiempo limitado!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;">';
     h += '</div>';
     // Modo TEST: si tipeás un username, la notif va SOLO a ese user.
     h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.30);border-radius:7px;padding:7px 10px;">';
@@ -29252,7 +29252,7 @@ function _renderRedeemCodes() {
     h += '<button type="button" onclick="testRedeemPush()" title="Manda un push de prueba a ese usuario SIN crear ningún código" style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);padding:5px 11px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;white-space:nowrap;">🔔 Probar push</button>';
     h += '<span style="color:#888;font-size:10.5px;flex-basis:100%;">Si ponés un username, la notif va sólo a esa persona. El código se crea igual. El botón "🔔 Probar push" verifica si la app del user recibe notifs, sin crear código.</span>';
     h += '</div>';
-    h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de Telegram. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
+    h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de WhatsApp. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
     h += '</div>';
 
     h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';

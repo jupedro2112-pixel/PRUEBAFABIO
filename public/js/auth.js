@@ -419,9 +419,9 @@ VIP.auth = (function () {
         // de WhatsApp" — sin la migración a Telegram.
         const useWa = !!VIP.state.excludedFromCodes;
         const icon = useWa ? waIcon : tgIcon;
-        const defaultLbl1 = useWa ? 'Canal de WhatsApp oficial' : 'Canal Telegram oficial';
-        const defaultLbl2 = useWa ? 'Canal de WhatsApp oficial 2' : 'Canal Telegram oficial 2';
-        const defaultLblTxt = useWa ? 'CANAL WHATSAPP' : 'CANAL TELEGRAM';
+        const defaultLbl1 = useWa ? 'Canal de WhatsApp oficial' : 'Canal WhatsApp oficial';
+        const defaultLbl2 = useWa ? 'Canal de WhatsApp oficial 2' : 'Canal WhatsApp oficial 2';
+        const defaultLblTxt = useWa ? 'CANAL WHATSAPP' : 'CANAL WHATSAPP';
         const escAttr = (s) => String(s || '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -453,14 +453,14 @@ VIP.auth = (function () {
                 communityEl.innerHTML =
                     '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
                       'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
-                      'aria-label="Abrir ' + (useWa ? 'canal de WhatsApp' : 'canal de Telegram') + '">' +
+                      'aria-label="Abrir ' + (useWa ? 'canal de WhatsApp' : 'canal de WhatsApp') + '">' +
                         icon +
                         '<span>' + escAttr(lblTxt) + '</span>' +
                     '</a>';
             } else {
                 communityEl.innerHTML =
                     '<a href="javascript:void(0)" role="button" aria-disabled="true" ' +
-                      'aria-label="' + (useWa ? 'Canal de WhatsApp' : 'Canal de Telegram') + ' no configurado">' +
+                      'aria-label="' + (useWa ? 'Canal de WhatsApp' : 'Canal de WhatsApp') + ' no configurado">' +
                         icon +
                         '<span>' + defaultLblTxt + '</span>' +
                     '</a>';
@@ -740,13 +740,13 @@ VIP.auth = (function () {
     // bloque "Unite a la comunidad". Visible durante la ventana de 24hs
     // activada cuando admin manda push de comunidad por equipo (o desde
     // el toggle manual).
-    // Botón "📲 Abrir canal de Telegram" debajo del input del código en
+    // Botón "📲 Abrir canal de WhatsApp" debajo del input del código en
     // la home. Visible cuando hay un link de Telegram configurado Y el
     // user todavía no canjeó ningún código (joinedTelegram === false).
     // Una vez que canjea, el flag se setea en el backend → al refrescar
     // se oculta solo.
     function renderTelegramQuickJoinBtn() {
-        // Limpieza fuerte 2026-05: el botón "📲 Abrir canal de Telegram"
+        // Limpieza fuerte 2026-05: el botón "📲 Abrir canal de WhatsApp"
         // pertenece al flujo de códigos (desactivado). Lo forzamos oculto
         // siempre para que el JS no lo reabra cuando se carga el /me.
         const btn = document.getElementById('telegramQuickJoinBtn');
@@ -946,9 +946,9 @@ VIP.auth = (function () {
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:center;justify-content:center;padding:14px;';
         const tappedHref = isDown ? replacementLink : link;
         const titleTxt = isDown ? '⚠️ Nos mudamos a Telegram' : '🔔 Unite a nuestra nueva comunidad';
-        const labelTxt = isDown ? (replacementLabel || 'el nuevo canal de Telegram') : (label || 'nuestro canal de Telegram');
+        const labelTxt = isDown ? (replacementLabel || 'el nuevo canal de WhatsApp') : (label || 'nuestro canal de WhatsApp');
         const bodyTxt = isDown
-            ? 'Ya no usamos WhatsApp. Sumate al nuevo canal privado de Telegram para no perderte códigos, novedades y juegos de la semana.'
+            ? 'Ya no usamos WhatsApp. Sumate al nuevo canal privado de WhatsApp para no perderte códigos, novedades y juegos de la semana.'
             : 'Unite a nuestra nueva comunidad en Telegram — ya no usamos WhatsApp. Ahí publicamos códigos, novedades y juegos de la semana.';
 
         function dismiss() {
@@ -2205,7 +2205,7 @@ window.submitCreateUserHelp = async function submitCreateUserHelp() {
         if (commBtn) {
             if (data.communityLink) {
                 commBtn.href = data.communityLink;
-                commBtn.textContent = '📣 ' + (data.communityLabel || 'Sumate al canal de Telegram');
+                commBtn.textContent = '📣 ' + (data.communityLabel || 'Sumate al canal de WhatsApp');
                 commBtn.style.display = '';
             } else {
                 commBtn.style.display = 'none';
@@ -2214,7 +2214,7 @@ window.submitCreateUserHelp = async function submitCreateUserHelp() {
         if (commBtn2) {
             if (data.communityLink2) {
                 commBtn2.href = data.communityLink2;
-                commBtn2.textContent = '📣 ' + (data.communityLabel2 || 'Segundo canal de Telegram');
+                commBtn2.textContent = '📣 ' + (data.communityLabel2 || 'Segundo canal de WhatsApp');
                 commBtn2.style.display = '';
             } else {
                 commBtn2.style.display = 'none';
