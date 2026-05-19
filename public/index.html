@@ -6738,6 +6738,15 @@
         return (window.VIP && VIP.config && VIP.config.API_URL) || '';
       }
       async function maybeShowSurvey() {
+        // Limpieza fuerte 2026-05: encuesta de notificaciones desactivada.
+        // Saltaba 1.5s después de entrar al chat. Cerramos también el modal
+        // si quedó pegado de un render anterior.
+        try {
+          const m = document.getElementById('notifSurveyModal');
+          if (m) m.style.display = 'none';
+          localStorage.setItem('notifSurveyDoneLocal', '1');
+        } catch (_) {}
+        return;
         try {
           if (localStorage.getItem('notifSurveyDoneLocal') === '1') return;
           const tok = getToken();

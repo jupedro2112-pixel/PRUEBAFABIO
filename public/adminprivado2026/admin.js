@@ -246,10 +246,10 @@ function showApp() {
         return;
     }
 
-    // Cargar la sección por defecto. Antes era 'Ingresos diarios' pero esa
-    // sección se ocultó en la limpieza 2026-05; ahora aterriza en
-    // Notificaciones, que es la sección visible más usada y sin PIN.
-    try { showSection('notifs'); } catch (_) {}
+    // Cargar la sección por defecto (Ingresos diarios) — coincide con el
+    // primer item del sidebar reorganizado. No tiene PIN, así que el admin
+    // aterriza directo en datos útiles sin tener que ingresar clave.
+    try { showSection('ingresos'); } catch (_) {}
 }
 
 // ============================================
