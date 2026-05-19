@@ -14303,9 +14303,11 @@ async function _fireTeamCampaign(c, fireDate) {
   return out;
 }
 
-// Arrancar el cron 45s después del boot, correr cada 60s.
-setTimeout(() => { _teamCampaignTick(); }, 45 * 1000);
-setInterval(() => { _teamCampaignTick(); }, 60 * 1000);
+// Cron de campañas DESACTIVADO (limpieza 2026-05). La automatización ya
+// NO corre — las campañas de equipo no se disparan solas.
+// Para reactivarla, descomentar las 2 líneas de abajo.
+// setTimeout(() => { _teamCampaignTick(); }, 45 * 1000);
+// setInterval(() => { _teamCampaignTick(); }, 60 * 1000);
 
 // =====================================================================
 // AUTO-ESTRATEGIA POR EQUIPO — generación masiva de TeamCampaigns basadas
@@ -16697,14 +16699,15 @@ async function winbackCronTick(opts = {}) {
   }
 }
 
-// Cron: cada 60 min (no-op si isActive=false). El primer tick ocurre 5 min
-// después del boot del server para no chocar con otros crons del start.
-setTimeout(() => {
-  winbackCronTick().catch(err => logger.warn(`[WINBACK] first tick: ${err.message}`));
-  setInterval(() => {
-    winbackCronTick().catch(err => logger.warn(`[WINBACK] tick interval: ${err.message}`));
-  }, 60 * 60 * 1000).unref();
-}, 5 * 60 * 1000);
+// Cron de winback DESACTIVADO (limpieza 2026-05). La automatización ya
+// NO corre — no se mandan más notificaciones de winback automáticas.
+// Para reactivarla, descomentar el bloque setTimeout de abajo.
+// setTimeout(() => {
+//   winbackCronTick().catch(err => logger.warn(`[WINBACK] first tick: ${err.message}`));
+//   setInterval(() => {
+//     winbackCronTick().catch(err => logger.warn(`[WINBACK] tick interval: ${err.message}`));
+//   }, 60 * 60 * 1000).unref();
+// }, 5 * 60 * 1000);
 
 // Reset winback tier cuando el user vuelve a cargar — hook en el outcome
 // resolver no es necesario porque _refreshPendingRecoveryOutcomes ya lo
