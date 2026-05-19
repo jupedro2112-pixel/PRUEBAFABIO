@@ -424,10 +424,11 @@
         #loginScreen .login-box > div:not(#errorMessage):not(.login-logo):not(.team-lookup-wrapper) {
             display: none !important;
         }
-        /* Botón "Consultar o crear usuario" debajo del form: visible siempre. */
+        /* Login reducido a SOLO usuario (2026-05): ocultamos también el
+           bloque de "Buscar usuario" + los botones de soporte (WhatsApp /
+           Telegram). En el login queda solo el logo y el ingreso por usuario. */
         #loginScreen .team-lookup-wrapper {
-            margin: 12px 0 4px;
-            display: block !important;
+            display: none !important;
         }
         #loginScreen .team-lookup-wrapper #createUserHelpBtn {
             width: 100%;
@@ -467,6 +468,8 @@
         #notifBanner,
         #reviewMiniSummary,
         #reviewFormCard,
+        #reviewsFeedCard,
+        #backupPhoneCard,
         #giveawayTotalLine,
         #complaintsBookBtn,
         #redeemCodeHomeCard,
