@@ -2113,54 +2113,91 @@
         }
 
         /* ===================================================================
-           REDISEÑO 2026-05 — pantalla del jugador: azul limpio, botones
-           grandes, reembolsos arriba y comunidad abajo. Va al final para
-           ganarle en especificidad a los estilos de arriba. Reversible. */
+           REDISEÑO 2026-05 v2 — "OSCURO VIBRANTE": identidad nueva, NADA que
+           ver con el azul anterior. Fondo casi negro con tinte violeta y
+           acentos neón multicolor (violeta, magenta, cian, lima). Mantiene
+           TODO el contenido (saldo, reembolsos, comunidad) — solo cambia el
+           look. Va al final para ganarle en especificidad. Reversible:
+           borrar este bloque entero vuelve al estilo previo. */
         #chatScreen.chat-screen:not(.hidden) {
-            background: linear-gradient(180deg, #0f3a6b 0%, #081a33 100%) !important;
+            background: linear-gradient(180deg, #161020 0%, #0c0a14 55%, #0a0810 100%) !important;
         }
         /* Orden vertical: welcome → reembolsos → comunidad */
         #chatScreen .refunds-welcome { order: 0 !important; }
         #chatScreen .header { order: 1 !important; margin-top: 0 !important; }
         #chatScreen #userCommunityBox { order: 2 !important; }
-        /* Botones de reembolso — grandes y azules */
+
+        /* Badge del usuario — chip violeta neón (antes borde dorado) */
+        #refundsLogoutBtn {
+            background: linear-gradient(135deg, rgba(124,58,237,0.95), rgba(168,85,247,0.95)) !important;
+            border: 1px solid rgba(196,140,255,0.70) !important;
+            box-shadow: 0 0 16px rgba(124,58,237,0.55) !important;
+        }
+        #refundsLogoutBtn .logout-username {
+            color: #ffffff !important;
+            opacity: 1 !important;
+        }
+
+        /* Título de bienvenida — blanco con glow violeta */
+        #chatScreen .refunds-welcome h2 {
+            color: #ffffff !important;
+            text-shadow: 0 0 16px rgba(168,85,247,0.55) !important;
+            letter-spacing: 0.5px !important;
+        }
+
+        /* Botones de reembolso — grandes y neón. SEMANAL violeta, MENSUAL
+           lima→cian. El MENSUAL usa texto oscuro por contraste. */
         #chatScreen .header-center .refund-btn,
-        #chatScreen .header-center .refund-btn.weekly,
-        #chatScreen .header-center .refund-btn.monthly {
-            background: linear-gradient(135deg, #2f8fe6 0%, #1763b8 100%) !important;
-            border: 1.5px solid #5fb0f0 !important;
+        #chatScreen .header-center .refund-btn.weekly {
+            background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%) !important;
+            border: 1.5px solid #c4b5fd !important;
             color: #ffffff !important;
             min-height: 92px !important;
             border-radius: 18px !important;
-            box-shadow: 0 6px 22px rgba(33,120,210,0.40) !important;
+            box-shadow: 0 0 24px rgba(124,58,237,0.45) !important;
             margin-bottom: 6px !important;
         }
         #chatScreen .header-center .refund-btn.monthly {
-            background: linear-gradient(135deg, #1763b8 0%, #0d3f7e 100%) !important;
+            background: linear-gradient(135deg, #84cc16 0%, #22d3ee 100%) !important;
+            border: 1.5px solid #bef264 !important;
+            box-shadow: 0 0 24px rgba(132,204,22,0.42) !important;
         }
+        /* Textos del SEMANAL (y default): blancos */
         #chatScreen .header-center .refund-btn .refund-label-full,
+        #chatScreen .header-center .refund-btn .refund-label-short,
         #chatScreen .header-center .refund-btn .refund-amount,
         #chatScreen .header-center .refund-btn .refund-timer {
             color: #ffffff !important;
+            text-shadow: none !important;
+        }
+        /* Textos del MENSUAL: oscuros (el fondo lima→cian es claro) */
+        #chatScreen .header-center .refund-btn.monthly .refund-label-full,
+        #chatScreen .header-center .refund-btn.monthly .refund-label-short,
+        #chatScreen .header-center .refund-btn.monthly .refund-amount,
+        #chatScreen .header-center .refund-btn.monthly .refund-timer {
+            color: #0c0a14 !important;
+            text-shadow: none !important;
         }
         #chatScreen .header-center .refund-btn .refund-amount {
             font-size: 23px !important;
             font-weight: 900 !important;
         }
-        /* Caja de comunidad — acento azul a tono */
+
+        /* Caja de comunidad — acento cian neón */
         #userCommunityBox.user-community-vigente {
-            background: rgba(47,143,230,0.10) !important;
-            border: 1.5px solid rgba(47,143,230,0.45) !important;
+            background: rgba(34,211,238,0.08) !important;
+            border: 1.5px solid rgba(34,211,238,0.42) !important;
+            box-shadow: 0 0 18px rgba(34,211,238,0.14) !important;
         }
 
-        /* Tarjeta de saldo — reformateada (2026-05): card azul a tono con
-           el rediseño, etiqueta "Tu saldo" arriba, monto MÁS CHICO y en
-           tipografía limpia (sin monospace), y botón "Abrir plataforma"
-           en azul (antes violeta). */
+        /* Tarjeta de saldo — card oscura con borde cian neón, etiqueta
+           "Tu saldo" en cian, monto blanco más chico y en tipografía
+           limpia (sin monospace), botón "Abrir plataforma" en magenta. */
         #chatScreen .user-balance-card {
-            background: linear-gradient(135deg, rgba(47,143,230,0.16), rgba(13,63,126,0.08)) !important;
-            border: 1.5px solid rgba(95,176,240,0.55) !important;
-            border-radius: 16px !important;
+            background: linear-gradient(135deg, rgba(34,211,238,0.10), rgba(124,58,237,0.10)) !important;
+            border: 1.5px solid rgba(34,211,238,0.55) !important;
+            border-radius: 18px !important;
+            box-shadow: 0 0 22px rgba(34,211,238,0.18) !important;
         }
         #chatScreen .user-balance-card .balance-row-v2 {
             flex-direction: column !important;
@@ -2171,7 +2208,8 @@
             font-weight: 700 !important;
             letter-spacing: 1.5px !important;
             text-transform: uppercase !important;
-            color: #9cc8f5 !important;
+            color: #22d3ee !important;
+            text-shadow: 0 0 8px rgba(34,211,238,0.6) !important;
             font-family: -apple-system, "Segoe UI", Roboto, sans-serif !important;
         }
         #chatScreen .user-balance-card .balance-amount-inline {
@@ -2183,28 +2221,11 @@
             text-shadow: none !important;
         }
         #chatScreen .user-balance-card .platform-btn-cta {
-            background: linear-gradient(135deg, #2f8fe6 0%, #1763b8 100%) !important;
-            border: 1.5px solid #5fb0f0 !important;
+            background: linear-gradient(135deg, #ec4899 0%, #a21caf 100%) !important;
+            border: 1.5px solid #f9a8d4 !important;
             border-radius: 14px !important;
             font-size: 15px !important;
-            box-shadow: 0 6px 22px rgba(33,120,210,0.40) !important;
-        }
-        #chatScreen .header-center .refund-btn.weekly .refund-label-full,
-        #chatScreen .header-center .refund-btn.monthly .refund-label-full {
-            color: #ffffff !important;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-            font-weight: 700 !important;
-            letter-spacing: 0.4px;
-        }
-        #chatScreen .header-center .refund-btn.weekly .refund-amount,
-        #chatScreen .header-center .refund-btn.monthly .refund-amount {
-            color: #ffffff !important;
-            font-weight: 800 !important;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-        }
-        #chatScreen .header-center .refund-btn.weekly .refund-timer,
-        #chatScreen .header-center .refund-btn.monthly .refund-timer {
-            color: rgba(255, 255, 255, 0.78) !important;
+            box-shadow: 0 0 24px rgba(236,72,153,0.48) !important;
         }
 
         /* Badge con el username (antes era boton Salir; ahora es solo info) */
