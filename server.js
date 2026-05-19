@@ -21259,10 +21259,12 @@ async function _runStrategyROITracker() {
   }
 }
 // Disparo inicial diferido + intervalos.
-setTimeout(() => { _runWeeklyStrategyChecker(); }, 4 * 60 * 1000);
-setInterval(() => { _runWeeklyStrategyChecker(); }, 5 * 60 * 1000);
-setTimeout(() => { _runStrategyROITracker(); }, 8 * 60 * 1000);
-setInterval(() => { _runStrategyROITracker(); }, 30 * 60 * 1000);
+// Crons de estrategias semanales y ROI DESACTIVADOS (limpieza 2026-05).
+// Para reactivar, descomentar las 4 líneas de abajo.
+// setTimeout(() => { _runWeeklyStrategyChecker(); }, 4 * 60 * 1000);
+// setInterval(() => { _runWeeklyStrategyChecker(); }, 5 * 60 * 1000);
+// setTimeout(() => { _runStrategyROITracker(); }, 8 * 60 * 1000);
+// setInterval(() => { _runStrategyROITracker(); }, 30 * 60 * 1000);
 
 // Auto-classifier: cada 3h procesa 1 difusión vieja sin clasificar.
 // Es caro (1 request JUGAYGANA por user del audience), por eso 1
@@ -22184,8 +22186,10 @@ async function _runRefundRemindersCheck() {
     logger.error(`[refund-reminder] check error: ${e.message}`);
   }
 }
-setTimeout(() => { _runRefundRemindersCheck(); }, 60 * 1000); // 1 min después del boot
-setInterval(() => { _runRefundRemindersCheck(); }, 5 * 60 * 1000); // cada 5 min
+// Cron de recordatorios de reembolso DESACTIVADO (limpieza 2026-05).
+// Para reactivar, descomentar las 2 líneas de abajo.
+// setTimeout(() => { _runRefundRemindersCheck(); }, 60 * 1000); // 1 min después del boot
+// setInterval(() => { _runRefundRemindersCheck(); }, 5 * 60 * 1000); // cada 5 min
 
 // GET /api/admin/strategy/reports — lista de reportes semanales.
 app.get('/api/admin/strategy/reports', authMiddleware, adminMiddleware, async (req, res) => {
