@@ -24127,6 +24127,19 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
   const username = req.user.username;
   const raffleId = req.params.id;
   let claimReserved = false;
+
+  // ──────────────────────────────────────────────────────────────────
+  // RECLAMO AUTOMÁTICO DESACTIVADO — cierre del programa de sorteos
+  // (2026-05). Los premios ya NO se acreditan desde la app. El ganador
+  // sigue viendo su número en la app (para verificar) y, si ganó, cobra
+  // contactando al número principal de soporte. El admin acredita a mano.
+  // Para reactivar el reclamo por app, eliminar este bloque return.
+  // ──────────────────────────────────────────────────────────────────
+  return res.status(400).json({
+    error: 'Los premios ya no se reclaman desde la app. Si tu número resultó ganador, escribíle al número principal de soporte para verificar y cobrar tu premio.',
+    claimDisabled: true
+  });
+
   try {
     const raffleRead = await Raffle.findOne({ id: raffleId }, {
       status: 1, winnerUsername: 1, prizeClaimedAt: 1, prizeValueARS: 1, name: 1, _id: 0
