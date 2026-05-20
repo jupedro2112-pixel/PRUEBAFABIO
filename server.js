@@ -7631,7 +7631,7 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
 // Se muestran al usuario en la pantalla de reembolsos.
 // 10 slots configurables + un teléfono default si ninguno matchea.
 // ============================================
-const USER_LINES_MAX_SLOTS = 30;
+const USER_LINES_MAX_SLOTS = 100;
 
 // Lista de usernames asignados a UNA línea (teamName + linePhone). Junta
 // dos fuentes para mostrar TODOS los usuarios de la línea sin importar de

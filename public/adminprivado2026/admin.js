@@ -20,7 +20,7 @@ let currentAdmin = null;
 
 // Máximo de slots permitidos por el backend (USER_LINES_MAX_SLOTS).
 // Lo descubrimos del response de GET /api/admin/user-lines y lo guardamos acá.
-let USER_LINES_MAX = 30;
+let USER_LINES_MAX = 100;
 
 // ============================================
 // HELPERS
