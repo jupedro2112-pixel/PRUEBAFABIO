@@ -2256,8 +2256,8 @@ async function pickLineFromLookup(username) {
 
 // Mismo criterio que pickLinePhoneForUsername pero para el nombre del equipo.
 // Lee el campo `teamName` del MISMO config 'userLinesByPrefix' (no creamos
-// otra config porque conceptualmente es el mismo equipo: prefijo "ato" =
-// numero "+54..." = nombre "Atomic"). Devuelve el teamName del prefijo mas
+// otra config porque conceptualmente es el mismo equipo: prefijo "win" =
+// numero "+54..." = nombre "WinMartin"). Devuelve el teamName del prefijo mas
 // largo que matchee, o '' si no matchea ninguno y no hay default.
 function pickTeamNameForUsername(linesConfig, username) {
   if (!linesConfig || typeof linesConfig !== 'object') return '';
@@ -2376,7 +2376,7 @@ app.get('/api/auth/_probe', (req, res) => {
 });
 
 // Lookup público (sin auth) para el botón "Consultar o crear usuario" del login.
-// El usuario escribe el nombre de su equipo (ej: "atomic", "marshall", "argentum")
+// El usuario escribe el nombre de su equipo (ej: "winmartin", "marshall", "argentum")
 // y devolvemos:
 //   - linePhone:    número principal del equipo (WhatsApp wa.me)
 //   - communityLink, communityLink2: canal activo de la comunidad
@@ -2496,7 +2496,7 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
     }
 
     // 3) Buscar comunidad: match del prefijo del community-config contra el
-    //    teamName del best match (ej: teamName="Atomic" → prefix "ato").
+    //    teamName del best match (ej: teamName="WinMartin" → prefix "win").
     let communityLink = null, communityLink2 = null, communityLabel = null, communityLabel2 = null;
     let communityMatchedPrefix = null;
     if (best && best.teamNameNorm) {
@@ -7968,7 +7968,7 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSection
     // Devolvemos solo los slots con datos (no padding); el frontend agrega
     // un botón "+ Agregar línea" para sumar más, hasta USER_LINES_MAX_SLOTS.
     // teamName es opcional — se muestra arriba a la izquierda en el header
-    // del usuario cuando el prefijo matchea (ej: 'ato' -> 'Atomic').
+    // del usuario cuando el prefijo matchea (ej: 'win' -> 'WinMartin').
     const cleaned = slots
       .filter(s => s && (s.prefix || s.phone || s.teamName))
       .map(s => ({
@@ -8077,13 +8077,13 @@ app.post(
         return res.status(400).json({ error: 'El nombre del equipo es demasiado largo (máx 24)' });
       }
 
-      // Prefijo de username del equipo (ej: "ato", "argen", "tiger"). El sistema
+      // Prefijo de username del equipo (ej: "win", "argen", "tiger"). El sistema
       // concatena prefix + valor de celda para reconstruir el username completo
       // antes de matchear contra la DB. Si la celda ya empieza con el prefix,
       // se usa la celda tal cual (modo tolerante).
       const prefix = (req.query.prefix ? String(req.query.prefix) : '').trim().toLowerCase();
       if (!prefix) {
-        return res.status(400).json({ error: 'Falta el parámetro prefix (las "iniciales" del equipo, ej: ato, argen, tiger)' });
+        return res.status(400).json({ error: 'Falta el parámetro prefix (las "iniciales" del equipo, ej: win, argen, tiger)' });
       }
       if (prefix.length > 20) {
         return res.status(400).json({ error: 'El prefijo es demasiado largo (máx 20)' });
@@ -8130,7 +8130,7 @@ app.post(
 
       // Extrae el teléfono del nombre de la hoja. El nombre puede venir como
       // un teléfono puro (ej: "+5491111...") o como "ETIQUETA + número" (ej:
-      // "TIGER 1 39095913748", "Atomic 2 +5493853..."). Devolvemos siempre
+      // "TIGER 1 39095913748", "WinMartin 2 +5493853..."). Devolvemos siempre
       // un string que arranque con '+' y tenga solo dígitos (formato canónico
       // para WhatsApp links). Si no se puede extraer, devuelve el sheetName
       // sin cambios como fallback (legacy).
@@ -8190,8 +8190,8 @@ app.post(
           // Reconstruir el username normalizado completo:
           //   - Si la celda normalizada ya empieza con el prefijo (norm), se usa tal cual.
           //   - Si no, le concatenamos el prefijo (la celda es solo el sufijo).
-          // Ejemplo: prefix='ato', celda='joaquin398' → 'atojoaquin398'.
-          //          prefix='ato', celda='Ato.Joaquín_398' → 'atojoaquin398'.
+          // Ejemplo: prefix='win', celda='joaquin398' → 'winmartin398'.
+          //          prefix='win', celda='Win.Martin_398' → 'winmartin398'.
           const fullNorm = cellNorm.startsWith(prefixNorm) ? cellNorm : (prefixNorm + cellNorm);
 
           // Detectar conflicto entre hojas del mismo upload.
@@ -20230,7 +20230,7 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
       .select('username prizeARS spunAt')
       .lean();
     // Tapa ~70% del username. Visible: últimas 2 letras del nombre + todos
-    // los números finales. Ej: "lalodj777" → "****dj777", "atojoaquin" → "********in",
+    // los números finales. Ej: "lalodj777" → "****dj777", "winmartin" → "********in",
     // "tribetcb45" → "******cb45".
     const _mask = (u) => {
       const s = String(u || '').trim();

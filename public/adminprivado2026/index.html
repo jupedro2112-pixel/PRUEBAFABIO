@@ -103,7 +103,6 @@
             .sidebar-nav .nav-item[data-section="recontactConversions"],
             .sidebar-nav .nav-item[data-section="encuesta"],
             .sidebar-nav .nav-item[data-section="complaints"],
-            .sidebar-nav .nav-item[data-section="numero"],
             .sidebar-nav .nav-item[data-section="refundReminders"],
             .sidebar-nav .nav-item[data-section="help"],
             .sidebar-nav .nav-item[data-section="welcomebonus"],
@@ -334,7 +333,7 @@
                     <div style="background:rgba(0,0,0,0.3);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
                         <p style="margin:0 0 4px;color:#d4af37;font-weight:700;font-size:13px;">Cómo funciona</p>
                         <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
-                            Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">ato</code>) y un <strong>número principal vigente</strong>. Cuando un usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin</code>), automáticamente se le muestra el número de ese equipo. Para rotar el número, modificalo acá y guardá.
+                            Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">win</code>) y un <strong>número principal vigente</strong>. Cuando un usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">winmartin</code>), automáticamente se le muestra el número de ese equipo. Para rotar el número, modificalo acá y guardá.
                         </p>
                     </div>
                     <div id="userLinesSlots" style="display:flex;flex-direction:column;gap:10px;"></div>
@@ -385,7 +384,7 @@
                     <h3 style="color:#00d4ff;font-size:15px;margin:0 0 8px;">📋 Asignar línea por listado de usuarios</h3>
                     <div style="background:rgba(0,0,0,0.3);border-left:3px solid #00d4ff;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
                         <p style="margin:0 0 6px;color:#bbb;font-size:11px;line-height:1.5;">
-                            Subí un <strong>archivo .xlsx</strong> con una sola columna de usernames (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin398</code>). Cada archivo es <strong>UNA línea</strong> de WhatsApp.
+                            Subí un <strong>archivo .xlsx</strong> con una sola columna de usernames (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">winmartin398</code>). Cada archivo es <strong>UNA línea</strong> de WhatsApp.
                         </p>
                         <p style="margin:0;color:#aaa;font-size:11px;line-height:1.5;">
                             <strong style="color:#25d366;">Si el usuario ya está registrado</strong> en tu plataforma, se le asigna esta línea ahora mismo (pisa la línea del equipo).<br>
@@ -434,7 +433,7 @@
                     <div style="background:rgba(0,0,0,0.3);border-left:3px solid #25d366;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
                         <p style="margin:0 0 4px;color:#25d366;font-weight:700;font-size:13px;">Cómo funciona</p>
                         <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
-                            Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">ato</code>) y un <strong>link de comunidad</strong> (link de WhatsApp, Telegram, etc.). Cuando el usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin</code>), se le muestra el link de su equipo en el home.
+                            Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">win</code>) y un <strong>link de comunidad</strong> (link de WhatsApp, Telegram, etc.). Cuando el usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">winmartin</code>), se le muestra el link de su equipo en el home.
                         </p>
                     </div>
                     <div id="userCommunitiesSlots" style="display:flex;flex-direction:column;gap:10px;"></div>
@@ -619,7 +618,7 @@
                             </label>
                         </div>
                         <div id="notifPrefixGroup" style="display:none;margin-top:6px;">
-                            <input type="text" id="notifPrefix" placeholder="ej: ato (manda solo a atojoaquin, atomartin, …)"
+                            <input type="text" id="notifPrefix" placeholder="ej: win (manda solo a winmartin, winjuan, …)"
                                    style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;"
                                    oninput="updateNotifPreview()">
                             <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Sin distinguir mayúsculas/minúsculas. Si coincide con un prefijo del Número principal vigente, le llega solo a ese equipo.</small>
@@ -1067,7 +1066,7 @@
                     <div style="color:#00d4ff;font-weight:900;font-size:12px;letter-spacing:0.6px;margin-bottom:6px;">🧪 PROBAR GIRO (simulación)</div>
                     <div style="color:#bbb;font-size:11px;margin-bottom:9px;line-height:1.5;">Tirá un giro de prueba a nombre de un usuario. No le afecta su giro real ni acredita plata — solo te muestra qué premio le habría salido con las probabilidades vigentes.</div>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                        <input id="rouletteTestUsername" type="text" placeholder="Username (ej: atojuan)" style="flex:1;min-width:160px;background:rgba(0,0,0,0.45);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;box-sizing:border-box;">
+                        <input id="rouletteTestUsername" type="text" placeholder="Username (ej: winmartin)" style="flex:1;min-width:160px;background:rgba(0,0,0,0.45);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;box-sizing:border-box;">
                         <button onclick="rouletteTestSpin()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🎰 PROBAR GIRO</button>
                     </div>
                     <div id="rouletteTestResult" style="margin-top:9px;"></div>

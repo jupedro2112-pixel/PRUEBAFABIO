@@ -613,11 +613,11 @@ function slotHtml(i, prefix, phone, teamName) {
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
-                <input type="text" class="user-line-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+                <input type="text" class="user-line-prefix" placeholder="ej: win (matchea winmartin, winjuan…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Nombre del equipo</label>
-                <input type="text" class="user-line-team" placeholder="ej: Atomic (se muestra arriba a la izquierda en la app del usuario)" maxlength="24" value="${escapeHtml(teamName)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.5);color:#c89bff;font-size:13px;font-weight:600;width:100%;box-sizing:border-box;">
+                <input type="text" class="user-line-team" placeholder="ej: WinMartin (se muestra arriba a la izquierda en la app del usuario)" maxlength="24" value="${escapeHtml(teamName)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.5);color:#c89bff;font-size:13px;font-weight:600;width:100%;box-sizing:border-box;">
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
@@ -871,7 +871,7 @@ function communitySlotHtml(i, prefix, link, link2, label, label2, excludeFromCod
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
-                <input type="text" class="user-community-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+                <input type="text" class="user-community-prefix" placeholder="ej: win (matchea winmartin, winjuan…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
             </div>
             <!-- Excluir del sistema de códigos Telegram: este equipo se
                  queda con su comunidad original (WhatsApp), no recibe
@@ -3992,7 +3992,7 @@ async function sendBulkNotification() {
         return;
     }
     if (target === 'prefix' && !prefix) {
-        showToast('Indicá el inicio de usuario (ej: ato)', 'error');
+        showToast('Indicá el inicio de usuario (ej: win)', 'error');
         return;
     }
     if (promoEnabled) {
@@ -22907,7 +22907,7 @@ function _renderTeamCampaignsList(d) {
     if (list.length === 0) {
         html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;padding:30px;text-align:center;color:#888;">';
         html += '  Todavía no hay campañas. Tocá <strong style="color:#66ff66;">+ NUEVA CAMPAÑA</strong> para crear la primera.<br>';
-        html += '  <span style="font-size:11px;">Ej: "Bono 50% Atomic miércoles 18-20" — apunta al equipo Atomic, día miércoles, hora 18-20, manda push + crea promo wa.link de 6 horas.</span>';
+        html += '  <span style="font-size:11px;">Ej: "Bono 50% WinMartin miércoles 18-20" — apunta al equipo WinMartin, día miércoles, hora 18-20, manda push + crea promo wa.link de 6 horas.</span>';
         html += '</div>';
         return html;
     }
@@ -22986,7 +22986,7 @@ function _teamCampaignOpenForm(id) {
     inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
     inner += '</div>';
     inner += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
-    inner += _tcField('Nombre interno', '<input id="tc_name" type="text" value="' + escapeHtml(c.name) + '" placeholder="Ej: Bono 50% Atomic miércoles" style="' + _tcInputStyle() + '">', true);
+    inner += _tcField('Nombre interno', '<input id="tc_name" type="text" value="' + escapeHtml(c.name) + '" placeholder="Ej: Bono 50% WinMartin miércoles" style="' + _tcInputStyle() + '">', true);
     inner += _tcField('Categoría', '<select id="tc_category" style="' + _tcInputStyle() + '">' +
         ['bonos','juegos','regalos','notif'].map(k => '<option value="' + k + '"' + (c.category === k ? ' selected' : '') + '>' + ({bonos:'🎁 Bono', juegos:'🎰 Invitación a jugar', regalos:'💎 Regalo', notif:'🔔 Notificación pelada'}[k]) + '</option>').join('') + '</select>');
     // Team selector

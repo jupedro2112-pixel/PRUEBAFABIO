@@ -2072,7 +2072,7 @@ window.handlePhoneOtpVerify = async function() {
 })();
 
 // Helpers para el botón "Crea tu usuario" del login. Consulta a /api/teams/lookup
-// con el nombre que escribe el usuario (ej: "atomic") y muestra los botones de
+// con el nombre que escribe el usuario (ej: "winmartin") y muestra los botones de
 // WhatsApp línea principal + comunidad del equipo que matcheó.
 // Cache del contacto de soporte (lazy-loaded). Lo cargamos al abrir el modal
 // y al mostrar el chatScreen para evitar request inútil en backgrounds.
