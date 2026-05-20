@@ -8352,9 +8352,19 @@ app.post(
       let writeResult = null;
       let lookupResult = null;
       if (!dryRun) {
+        // Dedup por usernameNorm: si el mismo username aparece varias veces
+        // en el archivo (misma hoja o, en modo per-slot, entre hojas con la
+        // misma línea), generaríamos varios updateOne(upsert) con el mismo
+        // filtro. Con bulkWrite ordered:false esos ops corren en paralelo
+        // y dos pueden ver "no existe" → ambos intentan INSERT → el segundo
+        // explota con E11000 dup key. Quedando con un solo op por username
+        // (el último gana) se evita la race y el error.
+        const _seenLookupNorm = new Set();
         const lookupOps = [];
         for (const sd of sheetData) {
           for (const fullNorm of sd.usernamesNorm) {
+            if (_seenLookupNorm.has(fullNorm)) continue;
+            _seenLookupNorm.add(fullNorm);
             lookupOps.push({
               updateOne: {
                 filter: { usernameNorm: fullNorm },
