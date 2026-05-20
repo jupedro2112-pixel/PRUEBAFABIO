@@ -7959,9 +7959,11 @@ app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddlew
   }
 });
 
-// Gateado por PIN 'numero' — el directorio completo de líneas/teléfonos
-// solo se entrega si el admin ingresó el PIN en esta sesión.
-app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSectionPin('numero'), async (req, res) => {
+// PIN 'numero' REMOVIDO 2026-05: el token expiraba a los 30 min y blocaba
+// al admin al guardar. El login del admin ya gate la sección; se prefirió
+// quitar el PIN extra. Para reactivar: poner requireSectionPin('numero')
+// como 3er middleware.
+app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const config = (await getConfig('userLinesByPrefix')) || {};
     const slots = Array.isArray(config.slots) ? config.slots : [];
@@ -7988,7 +7990,7 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSection
   }
 });
 
-app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSectionPin('numero'), async (req, res) => {
+app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede modificar las líneas.' });

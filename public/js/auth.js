@@ -406,12 +406,16 @@ VIP.auth = (function () {
             }
         }
 
-        // Bloque "Unite a la comunidad". Mismo patron: si hay link, abre el link
-        // (presumiblemente un wa.me/chat o link de comunidad WhatsApp); si no,
-        // se renderiza el boton sin destino para mantener el aspecto.
+        // Bloque "Unite a la comunidad" (2026-05): el link se ARMA con el
+        // mismo numero de la linea principal del equipo (el que viene del
+        // archivo cargado en "Numero principal vigente"), con el texto
+        // "Quiero unirme a su comunidad" pre-cargado. Ya no usamos el
+        // communityLink configurado aparte: una sola fuente de verdad.
         const communityEl = document.getElementById('userCommunityLink');
-        const communityLink = VIP.state.communityLink || null;
-        const communityLink2 = VIP.state.communityLink2 || null;
+        const _linePhoneRaw = (VIP.state.linePhone || '').replace(/[^\d+]/g, '').replace(/^\+/, '');
+        const _commMsg = encodeURIComponent('Quiero unirme a su comunidad');
+        const communityLink = _linePhoneRaw ? ('https://wa.me/' + _linePhoneRaw + '?text=' + _commMsg) : null;
+        const communityLink2 = null; // ya no usamos doble link
         const communityLabel = VIP.state.communityLabel || '';
         const communityLabel2 = VIP.state.communityLabel2 || '';
         // Si el equipo está excluido del sistema de códigos, sigue con
