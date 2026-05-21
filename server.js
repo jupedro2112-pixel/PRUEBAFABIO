@@ -2640,6 +2640,48 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
       }
     }
 
+    // Fallback final 2026-05: si el admin cargó al user en "Números vigentes"
+    // (UserLineLookup), lo aceptamos como whitelist local sin necesidad de
+    // que JUGAYGANA lo tenga. Creamos el User on-the-fly con los datos del
+    // lookup (línea + equipo). Útil cuando el sistema corre standalone sin
+    // sincronizar contra JUGAYGANA.
+    if (!user) {
+      try {
+        const normForLookup = normalizeUsernameForLookup(cleanUsername);
+        const lookup = normForLookup
+          ? await UserLineLookup.findOne({ usernameNorm: normForLookup }).maxTimeMS(3000).lean()
+          : null;
+        if (lookup) {
+          const userId = uuidv4();
+          user = await User.create({
+            id: userId,
+            username: cleanUsername.toLowerCase(),
+            password: 'asd123',
+            role: 'user',
+            accountNumber: generateAccountNumber(),
+            balance: 0,
+            createdAt: new Date(),
+            lastLogin: null,
+            isActive: true,
+            source: 'user-lines-lookup',
+            tokenVersion: 0,
+            mustChangePassword: false
+          });
+          try {
+            await ChatStatus.create({
+              userId,
+              username: cleanUsername.toLowerCase(),
+              status: 'open',
+              category: 'cargas'
+            });
+          } catch (csErr) { /* best-effort */ }
+          logger.info(`User ${cleanUsername} auto-created from UserLineLookup (team=${lookup.lineTeamName || 'n/a'})`);
+        }
+      } catch (luErr) {
+        logger.warn(`[LoginUsernameOnly] UserLineLookup fallback failed: ${luErr.message}`);
+      }
+    }
+
     if (!user) {
       return res.status(404).json({ error: 'Usuario no disponible' });
     }
