@@ -2570,6 +2570,40 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
 
 const DeviceAccount = require('./src/models/DeviceAccount');
 
+// Diagnóstico: ¿está este username en alguna tabla? Sirve para saber
+// rápido si una carga de .xlsx persistió y si el login va a poder
+// resolverlo. Solo admin. Uso desde el browser:
+//   /api/admin/user-lines/check-user?u=winwilson909
+app.get('/api/admin/user-lines/check-user', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raw = String((req.query && req.query.u) || '').trim();
+    if (!raw) return res.status(400).json({ error: 'Falta ?u=<username>' });
+    const norm = normalizeUsernameForLookup(raw);
+    const [userDoc, lookupDoc] = await Promise.all([
+      User.findOne({ username: { $regex: new RegExp('^' + escapeRegex(raw) + '$', 'i') } })
+        .select({ id: 1, username: 1, isActive: 1, role: 1, source: 1, _id: 0 })
+        .maxTimeMS(3000).lean(),
+      norm
+        ? UserLineLookup.findOne({ usernameNorm: norm })
+            .select({ usernameNorm: 1, usernameOriginal: 1, linePhone: 1, lineTeamName: 1, prefix: 1, importedAt: 1, _id: 0 })
+            .maxTimeMS(3000).lean()
+        : null
+    ]);
+    res.json({
+      input: { raw, norm },
+      foundInUser: !!userDoc,
+      user: userDoc || null,
+      foundInLookup: !!lookupDoc,
+      lookup: lookupDoc || null,
+      // Veredicto rápido: ¿qué pasaría si el user intenta loguearse AHORA?
+      loginWouldSucceed: !!userDoc || !!lookupDoc
+    });
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/check-user: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) => {
   console.log('[LoginUsernameOnly] HIT', { body: req.body, ip: req.ip });
   try {
@@ -2645,37 +2679,60 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     // que JUGAYGANA lo tenga. Creamos el User on-the-fly con los datos del
     // lookup (línea + equipo). Útil cuando el sistema corre standalone sin
     // sincronizar contra JUGAYGANA.
+    let _diagLookupChecked = false;
+    let _diagLookupFound = false;
+    let _diagCreateError = null;
     if (!user) {
       try {
         const normForLookup = normalizeUsernameForLookup(cleanUsername);
+        _diagLookupChecked = true;
+        logger.info(`[LoginUsernameOnly] lookup fallback: searching usernameNorm="${normForLookup}" (raw="${cleanUsername}")`);
         const lookup = normForLookup
           ? await UserLineLookup.findOne({ usernameNorm: normForLookup }).maxTimeMS(3000).lean()
           : null;
+        _diagLookupFound = !!lookup;
+        logger.info(`[LoginUsernameOnly] lookup result: found=${_diagLookupFound} team=${lookup ? lookup.lineTeamName : 'n/a'} linePhone=${lookup ? lookup.linePhone : 'n/a'}`);
         if (lookup) {
           const userId = uuidv4();
-          user = await User.create({
-            id: userId,
-            username: cleanUsername.toLowerCase(),
-            password: 'asd123',
-            role: 'user',
-            accountNumber: generateAccountNumber(),
-            balance: 0,
-            createdAt: new Date(),
-            lastLogin: null,
-            isActive: true,
-            source: 'user-lines-lookup',
-            tokenVersion: 0,
-            mustChangePassword: false
-          });
           try {
-            await ChatStatus.create({
-              userId,
+            user = await User.create({
+              id: userId,
               username: cleanUsername.toLowerCase(),
-              status: 'open',
-              category: 'cargas'
+              password: 'asd123',
+              email: null,
+              phone: null,
+              role: 'user',
+              accountNumber: generateAccountNumber(),
+              balance: 0,
+              createdAt: new Date(),
+              lastLogin: null,
+              isActive: true,
+              source: 'user-lines-lookup',
+              tokenVersion: 0,
+              mustChangePassword: false
             });
-          } catch (csErr) { /* best-effort */ }
-          logger.info(`User ${cleanUsername} auto-created from UserLineLookup (team=${lookup.lineTeamName || 'n/a'})`);
+            logger.info(`User ${cleanUsername} auto-created from UserLineLookup (team=${lookup.lineTeamName || 'n/a'})`);
+          } catch (createErr) {
+            _diagCreateError = createErr.message;
+            logger.error(`[LoginUsernameOnly] User.create FAIL for ${cleanUsername}: ${createErr.message}`);
+            // Si falla por race (otro request creó el user en paralelo), re-leer.
+            if (createErr.code === 11000) {
+              user = await User.findOne({
+                username: { $regex: new RegExp('^' + escapeRegex(cleanUsername) + '$', 'i') }
+              }).maxTimeMS(2000);
+              if (user) _diagCreateError = null;
+            }
+          }
+          if (user) {
+            try {
+              await ChatStatus.create({
+                userId: user.id || userId,
+                username: cleanUsername.toLowerCase(),
+                status: 'open',
+                category: 'cargas'
+              });
+            } catch (csErr) { /* best-effort */ }
+          }
         }
       } catch (luErr) {
         logger.warn(`[LoginUsernameOnly] UserLineLookup fallback failed: ${luErr.message}`);
@@ -2683,7 +2740,17 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     }
 
     if (!user) {
-      return res.status(404).json({ error: 'Usuario no disponible' });
+      // Diag visible en la response para que el admin/owner pueda saber
+      // POR QUÉ falla (sin tener que mirar logs de Render). Si esto te
+      // molesta en prod, mover a 'header' o sacarlo.
+      return res.status(404).json({
+        error: 'Usuario no disponible',
+        _diag: {
+          lookupChecked: _diagLookupChecked,
+          lookupFound: _diagLookupFound,
+          createError: _diagCreateError
+        }
+      });
     }
 
     const userObj = user.toObject ? user.toObject() : user;
