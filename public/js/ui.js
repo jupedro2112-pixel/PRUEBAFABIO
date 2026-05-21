@@ -613,6 +613,13 @@ CBU activo: ${cbuNumber}`;
     }
 
     function showInstallInstructions(platform) {
+        // Limpieza fuerte 2026-05: modales post-instalación desactivados.
+        // Mostraban el hook "¡LA APP YA ESTÁ INSTALADA! Falta poco para
+        // reclamar tu $5.000 GRATIS", pero el bono $5K está apagado y
+        // no tiene sentido mostrar el cartel. Para reactivar, sacar el
+        // return. Limpia cualquier modal que hubiera quedado pegado.
+        try { document.querySelectorAll('.ios-install-modal').forEach(m => m.remove()); } catch (_) {}
+        return;
         const modal = document.createElement('div');
         modal.className = 'ios-install-modal';
         // Cerrar al tocar el fondo (no el contenido).
