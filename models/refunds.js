@@ -94,12 +94,12 @@ async function canClaimDailyRefund(userId) {
 }
 
 // Verificar si el usuario puede reclamar reembolso semanal
-// Ventana: lunes y martes (TZ Argentina). 1 reclamo por semana calendario (lun-dom).
+// Ventana: SOLO martes (TZ Argentina). 1 reclamo por semana calendario (lun-dom).
 async function canClaimWeeklyRefund(userId) {
   try {
     const now = new Date();
     const dow = _argDayOfWeek(now);
-    const canClaimByDay = dow === 1 || dow === 2;
+    const canClaimByDay = dow === 2;
     const currentWeekStart = _argWeekStart(now);
 
     const lastWeekly = await RefundClaim.findOne({
@@ -110,21 +110,21 @@ async function canClaimWeeklyRefund(userId) {
     const claimed = !!(lastWeekly && new Date(lastWeekly.claimedAt) >= currentWeekStart);
     const canClaim = canClaimByDay && !claimed;
 
-    // Próximo lunes 00:00 ARG.
-    const daysUntilMonday = dow === 0 ? 1 : 8 - dow;
-    const nextMonday = new Date(currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+    // Próximo martes 00:00 ARG. currentWeekStart es el lunes 00:00 de esta
+    // semana ARG; el martes de la PRÓXIMA semana cae a +8 días.
+    const nextTuesday = new Date(currentWeekStart.getTime() + 8 * 24 * 60 * 60 * 1000);
 
     return {
       canClaim,
       claimed,
-      nextClaim: canClaim ? null : nextMonday.toISOString(),
+      nextClaim: canClaim ? null : nextTuesday.toISOString(),
       lastClaim: lastWeekly?.claimedAt || null,
       lastClaimAmount: lastWeekly?.amount || 0,
-      availableDays: 'Lunes y Martes'
+      availableDays: 'Martes'
     };
   } catch (error) {
     console.error('Error verificando reembolso semanal:', error);
-    return { canClaim: false, claimed: false, nextClaim: null, availableDays: 'Lunes y Martes' };
+    return { canClaim: false, claimed: false, nextClaim: null, availableDays: 'Martes' };
   }
 }
 

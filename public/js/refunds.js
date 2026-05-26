@@ -328,6 +328,13 @@ VIP.refunds = (function () {
     async function showRefundModal(type) {
         console.log('🎁 Abriendo modal de reembolso:', type);
 
+        // Reembolso diario desactivado (2026-05). Si quedó algún botón viejo
+        // en cache pidiendo 'daily', salimos sin abrir el modal.
+        if (type === 'daily') {
+            VIP.ui.showToast('El reembolso diario ya no está disponible. El semanal se reclama los martes.', 'info', 4500);
+            return;
+        }
+
         if (!VIP.state.refundStatus) {
             VIP.ui.showToast('Cargando información de reembolsos...', 'info');
             await loadRefundStatus();
@@ -360,8 +367,20 @@ VIP.refunds = (function () {
         const depEl = document.getElementById('refundDeposits');
         const witEl = document.getElementById('refundWithdrawals');
         const srcEl = document.getElementById('refundDebugSource');
+        const bonusRow = document.getElementById('refundBonusRow');
+        const bonusEl = document.getElementById('refundBonusCredits');
         if (depEl) depEl.textContent = `$${(typeData.deposits || 0).toLocaleString()}`;
         if (witEl) witEl.textContent = `$${(typeData.withdrawals || 0).toLocaleString()}`;
+        // Fila "Bonos previos descontados": solo visible si > 0.
+        const bonus = Number(typeData.bonusCredits || 0);
+        if (bonusRow && bonusEl) {
+            if (bonus > 0) {
+                bonusEl.textContent = `−$${bonus.toLocaleString()}`;
+                bonusRow.style.display = '';
+            } else {
+                bonusRow.style.display = 'none';
+            }
+        }
         if (srcEl) srcEl.textContent = 'Gracias por confiar en nosotros.';
 
         const availabilityInfo = document.getElementById('refundAvailabilityInfo');
@@ -370,7 +389,7 @@ VIP.refunds = (function () {
 
         if (type === 'weekly') {
             const today = new Date().getDay();
-            const isClaimableDay = today === 1 || today === 2;
+            const isClaimableDay = today === 2;
             if (!isClaimableDay) {
                 availabilityInfo.style.display = 'block';
                 availabilityInfo.style.background = 'rgba(255,165,0,0.1)';
@@ -380,7 +399,7 @@ VIP.refunds = (function () {
                         <span style="font-size: 20px;">ℹ️</span>
                         <div>
                             <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Semanal</p>
-                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable los días <strong>LUNES y MARTES</strong></p>
+                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable los días <strong>MARTES</strong></p>
                             <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde a la semana anterior (Lunes a Domingo)</p>
                         </div>
                     </div>
@@ -428,6 +447,25 @@ VIP.refunds = (function () {
             extraInfo.innerHTML = `<span style="color: #ffaa44;">✓ Ya reclamaste <strong>$${claimedAmt.toLocaleString()}</strong> en este período. Disponible en: <strong>${timeRemaining || 'pronto'}</strong></span>`;
             claimBtn.disabled = true;
             claimBtn.textContent = timeRemaining ? `✓ Reclamado — disponible en ${timeRemaining}` : '✓ Reclamado';
+            claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            claimBtn.onclick = null;
+        } else if (typeData.belowMinDeposits) {
+            // Gate de cargas mínimas $50.000 (2026-05). El usuario no
+            // cargó lo suficiente esta semana/mes como para acceder al
+            // reembolso. Mostramos cuánto le falta.
+            const req  = Number(typeData.minDepositsRequired || 50000);
+            const real = Number(typeData.realDeposits || 0);
+            const falta = Math.max(0, req - real);
+            const periodLabel = type === 'weekly' ? 'esta semana' : 'este mes';
+            extraInfo.innerHTML =
+                '<div style="background:rgba(255,170,68,0.08);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:10px 12px;color:#ffaa44;font-size:12.5px;line-height:1.5;">' +
+                '<strong>Todavía no llegás al mínimo para reclamar.</strong><br>' +
+                'Para acceder al reembolso necesitás cargar más de <strong>$' + req.toLocaleString('es-AR') + '</strong> ' + periodLabel + '. ' +
+                'Llevás <strong>$' + real.toLocaleString('es-AR') + '</strong>' +
+                (falta > 0 ? ' — te faltan <strong>$' + falta.toLocaleString('es-AR') + '</strong>.' : '.') +
+                '</div>';
+            claimBtn.disabled = true;
+            claimBtn.textContent = '🔒 Cargas insuficientes';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
         } else if (typeData.potentialAmount <= 0) {

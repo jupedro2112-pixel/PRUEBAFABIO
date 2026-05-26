@@ -5330,6 +5330,11 @@ async function getRealMovementsTotals(username, period) {
   }
 }
 
+// Umbral mínimo de cargas REALES (depósitos brutos − bonos nuestros) para
+// poder reclamar reembolso semanal y mensual. Decisión del owner 2026-05:
+// solo usuarios que cargaron > $50.000 en el período califican.
+const REFUND_MIN_DEPOSITS = 50000;
+
 app.get('/api/refunds/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -5354,10 +5359,21 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     // guardan los movimientos que pasan por nuestro panel admin; las
     // cargas/retiros directos del usuario en JUGAYGANA no quedaban
     // registrados → todos los reembolsos daban $0.
-    const [dailyMov, weeklyMov, monthlyMov] = await Promise.all([
+    const weekFrom = new Date(lastWeekRange.fromEpoch * 1000);
+    const weekTo   = new Date(lastWeekRange.toEpoch   * 1000);
+    const monthFrom = new Date(lastMonthRange.fromEpoch * 1000);
+    const monthTo   = new Date(lastMonthRange.toEpoch   * 1000);
+
+    const [dailyMov, weeklyMov, monthlyMov, weeklyBonusCredits, monthlyBonusCredits] = await Promise.all([
       getRealMovementsTotals(username, 'daily'),
       getRealMovementsTotals(username, 'weekly'),
-      getRealMovementsTotals(username, 'monthly')
+      getRealMovementsTotals(username, 'monthly'),
+      // Bonos/refunds/comisiones/fire_rewards que NOSOTROS le acreditamos
+      // en el período: JUGAYGANA los ve como "depósito" desde nuestra cuenta
+      // pero NO son carga real del user. Los descontamos para que el gate
+      // $50k y el % de reembolso no se calculen sobre plata regalada.
+      getRefundNonDepositCredits(username, weekFrom, weekTo),
+      getRefundNonDepositCredits(username, monthFrom, monthTo)
     ]);
 
     const dailyDeposits = dailyMov.deposits;
@@ -5367,17 +5383,25 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     const monthlyDeposits = monthlyMov.deposits;
     const monthlyWithdrawals = monthlyMov.withdrawals;
 
+    // Cargas reales = brutos de JG − bonos nuestros del período.
+    const weeklyRealDeposits  = Math.max(0, weeklyDeposits  - (weeklyBonusCredits  || 0));
+    const monthlyRealDeposits = Math.max(0, monthlyDeposits - (monthlyBonusCredits || 0));
+
     const dailyNetLoss = Math.max(0, dailyDeposits - dailyWithdrawals);
-    const weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
-    const monthlyNetLoss = Math.max(0, monthlyDeposits - monthlyWithdrawals);
+    const weeklyNetLoss  = Math.max(0, weeklyRealDeposits  - weeklyWithdrawals);
+    const monthlyNetLoss = Math.max(0, monthlyRealDeposits - monthlyWithdrawals);
+
+    // Gate: depósitos REALES de la semana/mes > $50.000.
+    const weeklyBelowMin  = weeklyRealDeposits  < REFUND_MIN_DEPOSITS;
+    const monthlyBelowMin = monthlyRealDeposits < REFUND_MIN_DEPOSITS;
 
     logger.info(`[REFUND] status — usuario: ${username} daily depositos:${dailyDeposits} retiros:${dailyWithdrawals} netLoss:${dailyNetLoss}`);
-    logger.info(`[REFUND] status — usuario: ${username} weekly depositos:${weeklyDeposits} retiros:${weeklyWithdrawals} netLoss:${weeklyNetLoss}`);
-    logger.info(`[REFUND] status — usuario: ${username} monthly depositos:${monthlyDeposits} retiros:${monthlyWithdrawals} netLoss:${monthlyNetLoss}`);
+    logger.info(`[REFUND] status — usuario: ${username} weekly dep:${weeklyDeposits} bonos:${weeklyBonusCredits} depReal:${weeklyRealDeposits} ret:${weeklyWithdrawals} netLoss:${weeklyNetLoss} belowMin:${weeklyBelowMin}`);
+    logger.info(`[REFUND] status — usuario: ${username} monthly dep:${monthlyDeposits} bonos:${monthlyBonusCredits} depReal:${monthlyRealDeposits} ret:${monthlyWithdrawals} netLoss:${monthlyNetLoss} belowMin:${monthlyBelowMin}`);
 
     const dailyPotential = Math.round(dailyNetLoss * 0.08);
-    const weeklyPotential = Math.round(weeklyNetLoss * 0.05);
-    const monthlyPotential = Math.round(monthlyNetLoss * 0.03);
+    const weeklyPotential = weeklyBelowMin ? 0 : Math.round(weeklyNetLoss * 0.05);
+    const monthlyPotential = monthlyBelowMin ? 0 : Math.round(monthlyNetLoss * 0.03);
 
     res.json({
       user: {
@@ -5387,7 +5411,11 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       },
       daily: {
         ...dailyStatus,
-        potentialAmount: dailyPotential,
+        // Reembolso diario desactivado (2026-05). Forzamos canClaim=false y
+        // disabled=true para que el front no muestre ni habilite el botón.
+        canClaim: false,
+        disabled: true,
+        potentialAmount: 0,
         netAmount: dailyNetLoss,
         deposits: dailyDeposits,
         withdrawals: dailyWithdrawals,
@@ -5397,9 +5425,16 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       },
       weekly: {
         ...weeklyStatus,
+        // Si no llega al mínimo de cargas, no se puede reclamar
+        // (independiente del día/ya-reclamado).
+        canClaim: weeklyStatus.canClaim && !weeklyBelowMin,
+        belowMinDeposits: weeklyBelowMin,
+        minDepositsRequired: REFUND_MIN_DEPOSITS,
         potentialAmount: weeklyPotential,
         netAmount: weeklyNetLoss,
         deposits: weeklyDeposits,
+        realDeposits: weeklyRealDeposits,
+        bonusCredits: weeklyBonusCredits || 0,
         withdrawals: weeklyWithdrawals,
         source: weeklyMov.source,
         percentage: 5,
@@ -5407,9 +5442,14 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       },
       monthly: {
         ...monthlyStatus,
+        canClaim: monthlyStatus.canClaim && !monthlyBelowMin,
+        belowMinDeposits: monthlyBelowMin,
+        minDepositsRequired: REFUND_MIN_DEPOSITS,
         potentialAmount: monthlyPotential,
         netAmount: monthlyNetLoss,
         deposits: monthlyDeposits,
+        realDeposits: monthlyRealDeposits,
+        bonusCredits: monthlyBonusCredits || 0,
         withdrawals: monthlyWithdrawals,
         source: monthlyMov.source,
         percentage: 3,
@@ -5422,11 +5462,25 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
   }
 });
 
+// Reembolso DIARIO desactivado (2026-05). Quedan solo semanal y mensual.
+// Devolvemos 410 Gone para que cualquier cliente viejo que todavía conserve
+// el botón visible reciba un mensaje claro en vez de procesar el claim.
 app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'El reembolso diario ya no está disponible. Reclamá el semanal los martes.',
+    canClaim: false,
+    disabled: true
+  });
+});
+
+// Endpoint viejo del daily, deshabilitado. El bloque de abajo queda como
+// referencia (no se ejecuta porque el handler de arriba responde y termina).
+app.post('/api/refunds/_legacy/claim/daily', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
-    
+
     if (!await acquireRefundLock(userId, 'daily')) {
       return res.json({
         success: false,
@@ -5637,17 +5691,39 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
       
-      const { fromDateStr, toDateStr } = jugaygana.getLastWeekRangeArgentinaEpoch();
+      const weekRange = jugaygana.getLastWeekRangeArgentinaEpoch();
+      const { fromDateStr, toDateStr, fromEpoch, toEpoch } = weekRange;
 
-      // Obtener movimientos REALES del período desde JUGAYGANA
-      const mov = await getRealMovementsTotals(username, 'weekly');
+      // Obtener movimientos REALES del período desde JUGAYGANA + bonos
+      // nuestros del mismo período (para descontarlos de los depósitos).
+      const [mov, bonusCredits] = await Promise.all([
+        getRealMovementsTotals(username, 'weekly'),
+        getRefundNonDepositCredits(
+          username,
+          new Date(fromEpoch * 1000),
+          new Date(toEpoch * 1000)
+        )
+      ]);
       const totalDeposits = mov.deposits;
       const totalWithdrawals = mov.withdrawals;
+      const realDeposits = Math.max(0, totalDeposits - (bonusCredits || 0));
 
-      logger.info('[REFUND] weekly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
+      logger.info(`[REFUND] weekly — usuario:${username} dep:${totalDeposits} bonos:${bonusCredits} depReal:${realDeposits} ret:${totalWithdrawals}`);
 
-      // Calcular pérdida real (lo que depositó y NO retiró)
-      const netLoss = Math.max(0, totalDeposits - totalWithdrawals);
+      // Gate: cargas reales de la semana < $50k → no califica.
+      if (realDeposits < REFUND_MIN_DEPOSITS) {
+        return res.json({
+          success: false,
+          message: `Para reclamar el reembolso semanal tenés que haber cargado más de $${REFUND_MIN_DEPOSITS.toLocaleString('es-AR')} la semana pasada. Llevás $${realDeposits.toLocaleString('es-AR')}.`,
+          canClaim: false,
+          belowMinDeposits: true,
+          minDepositsRequired: REFUND_MIN_DEPOSITS,
+          realDeposits
+        });
+      }
+
+      // Calcular pérdida real (cargas reales del user que no retiró)
+      const netLoss = Math.max(0, realDeposits - totalWithdrawals);
 
       if (netLoss === 0) {
         logger.info('[REFUND] weekly — sin pérdida neta para:', username);
@@ -5850,17 +5926,39 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
       
-      const { fromDateStr, toDateStr } = jugaygana.getLastMonthRangeArgentinaEpoch();
+      const monthRange = jugaygana.getLastMonthRangeArgentinaEpoch();
+      const { fromDateStr, toDateStr, fromEpoch, toEpoch } = monthRange;
 
-      // Obtener movimientos REALES del período desde JUGAYGANA
-      const mov = await getRealMovementsTotals(username, 'monthly');
+      // Movimientos del mes + bonos nuestros del mismo mes (para
+      // descontarlos del cálculo, como en el semanal).
+      const [mov, bonusCredits] = await Promise.all([
+        getRealMovementsTotals(username, 'monthly'),
+        getRefundNonDepositCredits(
+          username,
+          new Date(fromEpoch * 1000),
+          new Date(toEpoch * 1000)
+        )
+      ]);
       const totalDeposits = mov.deposits;
       const totalWithdrawals = mov.withdrawals;
+      const realDeposits = Math.max(0, totalDeposits - (bonusCredits || 0));
 
-      logger.info('[REFUND] monthly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
+      logger.info(`[REFUND] monthly — usuario:${username} dep:${totalDeposits} bonos:${bonusCredits} depReal:${realDeposits} ret:${totalWithdrawals}`);
 
-      // Calcular pérdida real (lo que depositó y NO retiró)
-      const netLoss = Math.max(0, totalDeposits - totalWithdrawals);
+      // Gate: cargas reales del mes < $50k → no califica.
+      if (realDeposits < REFUND_MIN_DEPOSITS) {
+        return res.json({
+          success: false,
+          message: `Para reclamar el reembolso mensual tenés que haber cargado más de $${REFUND_MIN_DEPOSITS.toLocaleString('es-AR')} el mes pasado. Llevás $${realDeposits.toLocaleString('es-AR')}.`,
+          canClaim: false,
+          belowMinDeposits: true,
+          minDepositsRequired: REFUND_MIN_DEPOSITS,
+          realDeposits
+        });
+      }
+
+      // Calcular pérdida real (cargas reales del user que no retiró)
+      const netLoss = Math.max(0, realDeposits - totalWithdrawals);
 
       if (netLoss === 0) {
         logger.info('[REFUND] monthly — sin pérdida neta para:', username);

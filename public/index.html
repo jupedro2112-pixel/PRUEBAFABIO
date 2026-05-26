@@ -2723,7 +2723,7 @@
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
-                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (Lun-Mar)">
+                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (solo Martes)">
                     <span class="refund-label-full">📆 Reembolso Semanal</span>
                     <span class="refund-label-short">📆 SEMANAL</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
@@ -4337,9 +4337,6 @@
                 <p style="font-size:12px;color:#aaa;">Elegí el tipo de reembolso a consultar</p>
             </div>
             <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;">
-                <button onclick="VIP.refunds.showRefundModal('daily');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;">
-                    📅 Reembolso Diario (8% pérdidas de ayer)
-                </button>
                 <button onclick="VIP.refunds.showRefundModal('weekly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a6b3a,#2d9b56);">
                     📆 Reembolso Semanal (5% pérdidas semana)
                 </button>
@@ -4445,6 +4442,12 @@
                     <div class="refund-info-row">
                         <span>Retiros del período:</span>
                         <span id="refundWithdrawals" style="color: #88ccff;">$0</span>
+                    </div>
+                    <!-- Bonos / refunds previos que YA te dimos: se restan
+                         de la base de cálculo (no es plata que cargaste). -->
+                    <div class="refund-info-row" id="refundBonusRow" style="display:none;">
+                        <span>Bonos previos (descontados):</span>
+                        <span id="refundBonusCredits" style="color: #ffa500;">$0</span>
                     </div>
                     <div class="refund-info-row" style="border-top: 1px dashed rgba(255,255,255,0.15); margin-top: 6px; padding-top: 6px;">
                         <span><strong>Pérdida neta:</strong></span>
