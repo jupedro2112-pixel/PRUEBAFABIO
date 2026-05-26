@@ -980,6 +980,14 @@ async function getUserNetCurrentWeek(username) {
 }
 
 function getLastWeekRangeArgentinaEpoch() {
+  // Decisión del owner 2026-05: la "semana de cobro" cierra el LUNES.
+  // El user reclama los martes los movimientos del martes anterior al
+  // lunes anterior (martes-lunes inclusive, 7 días). Antes era lun-dom.
+  //
+  // Ejemplos:
+  //   Si HOY es martes 26  → período: martes 19 al lunes 25.
+  //   Si HOY es miércoles 27 → mismo período (mar 19 al lun 25).
+  //   Si HOY es lunes 25 → período anterior: martes 12 al lunes 18.
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Argentina/Buenos_Aires',
     year: 'numeric',
@@ -995,33 +1003,35 @@ function getLastWeekRangeArgentinaEpoch() {
 
   // Fecha actual en Argentina
   const todayLocal = new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`);
-  
-  // Día de la semana (0 = domingo, 1 = lunes, etc.)
+
+  // Día de la semana (0 = domingo, 1 = lunes, 2 = martes, ...)
   const dayOfWeek = todayLocal.getDay();
-  
-  // Días desde el lunes de esta semana
-  const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  
-  // Lunes de esta semana
-  const thisMonday = new Date(todayLocal.getTime() - daysSinceMonday * 24 * 60 * 60 * 1000);
-  
-  // Lunes de la semana pasada (7 días antes)
-  const lastMonday = new Date(thisMonday.getTime() - 7 * 24 * 60 * 60 * 1000);
-  
-  // Domingo de la semana pasada (6 días después del lunes pasado)
-  const lastSunday = new Date(lastMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
 
-  const mondayParts = formatter.formatToParts(lastMonday);
-  const sundayParts = formatter.formatToParts(lastSunday);
+  // Días desde el ÚLTIMO LUNES (estricto: tiene que ser <= ayer).
+  //   lunes (1)   → 7   (el lunes pasado, no hoy)
+  //   martes (2)  → 1
+  //   miércoles (3) → 2
+  //   ...
+  //   domingo (0) → 6
+  const daysSinceLastMonday = dayOfWeek === 1 ? 7 : (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
 
-  const from = new Date(`${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}T00:00:00-03:00`);
-  const to = new Date(`${sundayParts.find(p => p.type === 'year').value}-${sundayParts.find(p => p.type === 'month').value}-${sundayParts.find(p => p.type === 'day').value}T23:59:59-03:00`);
+  // Lunes que cierra la "semana de cobro" anterior (toDateStr).
+  const lastMonday = new Date(todayLocal.getTime() - daysSinceLastMonday * 24 * 60 * 60 * 1000);
+
+  // Martes 6 días antes del lunes de cierre → inicio del período (fromDateStr).
+  const lastTuesday = new Date(lastMonday.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+  const tuesdayParts = formatter.formatToParts(lastTuesday);
+  const mondayParts  = formatter.formatToParts(lastMonday);
+
+  const from = new Date(`${tuesdayParts.find(p => p.type === 'year').value}-${tuesdayParts.find(p => p.type === 'month').value}-${tuesdayParts.find(p => p.type === 'day').value}T00:00:00-03:00`);
+  const to   = new Date(`${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}T23:59:59-03:00`);
 
   return {
     fromEpoch: Math.floor(from.getTime() / 1000),
     toEpoch: Math.floor(to.getTime() / 1000),
-    fromDateStr: `${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}`,
-    toDateStr: `${sundayParts.find(p => p.type === 'year').value}-${sundayParts.find(p => p.type === 'month').value}-${sundayParts.find(p => p.type === 'day').value}`
+    fromDateStr: `${tuesdayParts.find(p => p.type === 'year').value}-${tuesdayParts.find(p => p.type === 'month').value}-${tuesdayParts.find(p => p.type === 'day').value}`,
+    toDateStr:   `${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}`
   };
 }
 

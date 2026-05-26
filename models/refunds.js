@@ -49,9 +49,20 @@ function _argMonthStart(d) {
   return new Date(`${y}-${m}-01T00:00:00-03:00`);
 }
 function _argWeekStart(d) {
-  // Lunes de la semana actual en ARG.
+  // Inicio de la "semana de cobro" actual en ARG: el ÚLTIMO MARTES
+  // (incluyendo hoy si es martes). La semana de cobro corre martes a
+  // lunes, así que cualquier claim hecho desde el martes hasta el lunes
+  // siguiente pertenece a la misma "semana de cobro".
+  //   martes (2) → 0
+  //   miércoles (3) → 1
+  //   ...
+  //   domingo (0) → 5
+  //   lunes (1) → 6
   const dow = _argDayOfWeek(d);
-  const offset = dow === 0 ? 6 : dow - 1;
+  let offset;
+  if (dow >= 2) offset = dow - 2;
+  else if (dow === 0) offset = 5; // domingo
+  else offset = 6; // lunes
   const dateStr = _argDateString(d);
   const todayMidnight = new Date(`${dateStr}T00:00:00-03:00`);
   return new Date(todayMidnight.getTime() - offset * 24 * 60 * 60 * 1000);
@@ -110,9 +121,9 @@ async function canClaimWeeklyRefund(userId) {
     const claimed = !!(lastWeekly && new Date(lastWeekly.claimedAt) >= currentWeekStart);
     const canClaim = canClaimByDay && !claimed;
 
-    // Próximo martes 00:00 ARG. currentWeekStart es el lunes 00:00 de esta
-    // semana ARG; el martes de la PRÓXIMA semana cae a +8 días.
-    const nextTuesday = new Date(currentWeekStart.getTime() + 8 * 24 * 60 * 60 * 1000);
+    // Próximo martes 00:00 ARG. currentWeekStart YA es el martes 00:00
+    // de esta semana de cobro, así que el próximo martes cae a +7 días.
+    const nextTuesday = new Date(currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     return {
       canClaim,

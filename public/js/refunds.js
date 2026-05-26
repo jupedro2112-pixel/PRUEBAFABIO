@@ -356,7 +356,7 @@ VIP.refunds = (function () {
         };
         const periodLabels = {
             daily:   '📊 PÉRDIDAS',
-            weekly:  '📊 PÉRDIDAS DE LA SEMANA PASADA (Lun-Dom)',
+            weekly:  '📊 PÉRDIDAS DE LA SEMANA (Mar-Lun)',
             monthly: '📊 PÉRDIDAS DEL MES PASADO'
         };
 
@@ -404,7 +404,7 @@ VIP.refunds = (function () {
                         <div>
                             <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Semanal</p>
                             <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable los días <strong>MARTES</strong></p>
-                            <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde a la semana anterior (Lunes a Domingo)</p>
+                            <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde a la semana de cobro: <strong>martes pasado a lunes pasado</strong> (lunes incluido).</p>
                         </div>
                     </div>
                 `;
