@@ -2772,7 +2772,18 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     }
 
     if (userObj.isActive === false) {
-      return res.status(404).json({ error: 'Usuario no disponible' });
+      // Diag explícito: el user existe pero está desactivado en la DB.
+      // Sin esto, el operador ve 'Usuario no disponible' sin contexto y
+      // confunde con el caso 'no existe'.
+      return res.status(404).json({
+        error: 'Usuario no disponible',
+        _diag: {
+          reason: 'user_inactive',
+          foundInUser: true,
+          userIsActive: false,
+          message: 'El user existe en la DB pero tiene isActive=false. Reactivalo desde el panel admin.'
+        }
+      });
     }
     if (userObj.isBlocked === true) {
       return res.status(403).json({
@@ -2781,7 +2792,15 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
       });
     }
     if (isAdminRole(userObj.role)) {
-      return res.status(403).json({ error: 'Usuario no disponible' });
+      return res.status(403).json({
+        error: 'Usuario no disponible',
+        _diag: {
+          reason: 'admin_role',
+          foundInUser: true,
+          userRole: userObj.role,
+          message: 'El user tiene rol admin — la app del jugador rechaza admins por seguridad.'
+        }
+      });
     }
 
     // === Anti multi-cuenta por dispositivo ===
