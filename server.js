@@ -8748,12 +8748,12 @@ app.post(
 
       const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
       // Modo de import:
-      //   'merge' (default, NO ROMPE lo que ya está): si un user ya tiene una
-      //     línea asignada, lo dejamos como está. Sólo asignamos los que NO
-      //     tienen línea o ya estaban en esta misma línea (re-confirma).
-      //   'overwrite': fuerza la línea para todos los del archivo, incluso
-      //     reasigna los que estaban en otro equipo.
-      const importMode = String(req.query.mode || 'merge').toLowerCase() === 'overwrite' ? 'overwrite' : 'merge';
+      //   'overwrite' (DEFAULT 2026-05): fuerza la línea para todos los del
+      //     archivo, incluso reasigna los que estaban en otro equipo. Decisión
+      //     del owner: cada xlsx que se carga es la verdad — pisa siempre.
+      //   'merge' (opt-in con ?mode=merge): si un user ya tiene OTRA línea
+      //     asignada, lo deja como está. Solo asigna los que no tienen.
+      const importMode = String(req.query.mode || 'overwrite').toLowerCase() === 'merge' ? 'merge' : 'overwrite';
 
       const buf = req.body;
       if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
@@ -11447,6 +11447,91 @@ app.post('/api/admin/teams/merge', authMiddleware, superAdminMiddleware, async (
   } catch (err) {
     logger.error(`[teams/merge] error: ${err.message}\n${err.stack}`);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Reasignar UN solo usuario a una línea específica. Decisión del owner
+// 2026-05: cuando se manda a un user por error a la línea equivocada, hay
+// que poder corregirlo desde el panel admin sin tener que reimportar todo
+// el xlsx.
+//   body: { username, linePhone, lineTeamName }
+// Pisa lo que tenga el User y upsertea el UserLineLookup para que si
+// después se re-importa otro xlsx, esta asignación quede registrada como
+// 'admin-manual' (gana sobre el import en modo merge; en overwrite el xlsx
+// gana — que es lo esperado: el xlsx es la verdad por encima de cualquier
+// cosa, salvo intervención manual posterior).
+app.post('/api/admin/user-lines/assign-user', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const usernameRaw = String((req.body && req.body.username) || '').trim();
+    const linePhoneRaw = String((req.body && req.body.linePhone) || '').trim();
+    const lineTeamName = String((req.body && req.body.lineTeamName) || '').trim();
+    if (!usernameRaw) return res.status(400).json({ error: 'Falta username' });
+    if (!linePhoneRaw) return res.status(400).json({ error: 'Falta linePhone' });
+    if (!lineTeamName) return res.status(400).json({ error: 'Falta lineTeamName' });
+
+    const digits = linePhoneRaw.replace(/[^\d]/g, '');
+    if (digits.length < 7 || digits.length > 18) {
+      return res.status(400).json({ error: `linePhone inválido (${digits.length} dígitos)` });
+    }
+    const linePhone = linePhoneRaw.startsWith('+') ? '+' + digits : '+' + digits;
+
+    const adminUsername = (req.user && req.user.username) || 'admin';
+    const usernameLower = usernameRaw.toLowerCase();
+    const usernameNorm = normalizeUsernameForLookup(usernameRaw);
+
+    // 1) Actualizar el User (si existe). Match case-insensitive porque los
+    //    docs viejos pueden tener mayúsculas mezcladas.
+    const userResult = await User.updateOne(
+      { username: { $regex: new RegExp('^' + escapeRegex(usernameRaw) + '$', 'i') } },
+      {
+        $set: {
+          linePhone,
+          lineTeamName,
+          lineAssignedAt: new Date(),
+          lineAssignedBy: adminUsername,
+          lineAssignmentSource: 'admin-manual',
+          lineAssignmentNote: `Reasignado a mano por ${adminUsername}`
+        }
+      }
+    );
+
+    // 2) Upsert en UserLineLookup para sobrevivir re-imports en modo merge.
+    let lookupResult = null;
+    if (usernameNorm) {
+      lookupResult = await UserLineLookup.updateOne(
+        { usernameNorm },
+        {
+          $set: {
+            usernameOriginal: usernameRaw,
+            linePhone,
+            lineTeamName,
+            importedAt: new Date(),
+            importedBy: adminUsername + ' (manual)'
+          },
+          $setOnInsert: { usernameNorm }
+        },
+        { upsert: true }
+      );
+    }
+
+    logger.info(`[user-lines/assign-user] user=${usernameRaw} phone=${linePhone} team="${lineTeamName}" userMatched=${userResult.matchedCount} userModified=${userResult.modifiedCount} lookupUpserted=${lookupResult ? !!lookupResult.upsertedId : false} by=${adminUsername}`);
+
+    return res.json({
+      success: true,
+      username: usernameRaw,
+      linePhone,
+      lineTeamName,
+      userMatched: userResult.matchedCount || 0,
+      userModified: userResult.modifiedCount || 0,
+      lookupUpserted: lookupResult ? !!lookupResult.upsertedId : false,
+      lookupModified: lookupResult ? (lookupResult.modifiedCount || 0) : 0,
+      message: (userResult.matchedCount || 0) === 0
+        ? 'No existe usuario local con ese username, pero quedó cargado en Números vigentes — caerá en esta línea cuando ingrese por primera vez.'
+        : `Usuario reasignado a "${lineTeamName}" (${linePhone}).`
+    });
+  } catch (error) {
+    logger.error(`[user-lines/assign-user] error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor: ' + error.message });
   }
 });
 

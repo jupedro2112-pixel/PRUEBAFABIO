@@ -735,6 +735,7 @@ async function loadUserLines() {
             USER_LINES_MAX = data.maxSlots;
         }
         renderUserLinesSlots(data.slots || []);
+        populateReassignSelect(data.slots || [], data);
         const def = document.getElementById('userLinesDefaultPhone');
         if (def) def.value = data.defaultPhone || '';
         const defTeam = document.getElementById('userLinesDefaultTeam');
@@ -745,6 +746,91 @@ async function loadUserLines() {
     }
     // En la misma sección está el contacto de soporte: lo cargamos en paralelo.
     try { loadSupportPhone(); } catch (_) {}
+}
+
+// Popula el <select> de "Reasignar 1 usuario" con las líneas/equipos
+// configurados. Cada option lleva phone+teamName en value (json) para que
+// reassignSingleUser pueda mandar ambos al endpoint.
+function populateReassignSelect(slots, cfg) {
+    const sel = document.getElementById('reassignUserLine');
+    if (!sel) return;
+    const opts = ['<option value="">— Elegí una línea —</option>'];
+    const seen = new Set();
+    for (const s of (slots || [])) {
+        const phone = (s && s.phone) ? String(s.phone).trim() : '';
+        const team  = (s && s.teamName) ? String(s.teamName).trim() : '';
+        if (!phone) continue;
+        const key = phone + '|' + team;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const val = JSON.stringify({ phone, team });
+        const label = (team || '(sin equipo)') + ' — ' + phone;
+        opts.push('<option value="' + val.replace(/"/g, '&quot;') + '">' + label.replace(/</g, '&lt;') + '</option>');
+    }
+    // También incluir la línea por defecto del config si tiene phone+team.
+    const defP = cfg && cfg.defaultPhone ? String(cfg.defaultPhone).trim() : '';
+    const defT = cfg && cfg.defaultTeamName ? String(cfg.defaultTeamName).trim() : '';
+    if (defP) {
+        const key = defP + '|' + defT;
+        if (!seen.has(key)) {
+            const val = JSON.stringify({ phone: defP, team: defT });
+            opts.push('<option value="' + val.replace(/"/g, '&quot;') + '">(default) ' + (defT || '(sin equipo)') + ' — ' + defP + '</option>');
+        }
+    }
+    sel.innerHTML = opts.join('');
+}
+
+// Reasigna UN usuario a la línea elegida en el select. Llama al endpoint
+// /api/admin/user-lines/assign-user que setea User.linePhone/lineTeamName y
+// upsertea UserLineLookup. Source queda como 'admin-manual'.
+async function reassignSingleUser() {
+    const userInput = document.getElementById('reassignUserUsername');
+    const sel = document.getElementById('reassignUserLine');
+    const resultDiv = document.getElementById('reassignUserResult');
+    const btn = document.getElementById('reassignUserBtn');
+    if (!userInput || !sel || !resultDiv) return;
+    const username = (userInput.value || '').trim();
+    const sel_val = (sel.value || '').trim();
+    if (!username) {
+        resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:6px;">Falta el username.</div>';
+        return;
+    }
+    if (!sel_val) {
+        resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:6px;">Elegí una línea.</div>';
+        return;
+    }
+    let parsed;
+    try { parsed = JSON.parse(sel_val); } catch (_) {
+        resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:6px;">Línea inválida.</div>';
+        return;
+    }
+    const linePhone = (parsed && parsed.phone) ? String(parsed.phone) : '';
+    const lineTeamName = (parsed && parsed.team) ? String(parsed.team) : '';
+    if (!linePhone || !lineTeamName) {
+        resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:6px;">La línea elegida no tiene teléfono o equipo.</div>';
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando…'; }
+    resultDiv.innerHTML = '';
+    try {
+        const r = await authFetch('/api/admin/user-lines/assign-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, linePhone, lineTeamName })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.success !== true) {
+            resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:8px;background:rgba(255,128,128,0.08);border:1px solid rgba(255,128,128,0.35);border-radius:6px;">❌ ' + (data.error || ('Error ' + r.status)) + '</div>';
+        } else {
+            const note = data.userMatched ? '' : '<div style="color:#ffaa44;font-size:11px;margin-top:4px;">⚠ El usuario todavía no existe localmente. Lo cargué en Números vigentes — cuando ingrese, va a caer en esta línea.</div>';
+            resultDiv.innerHTML = '<div style="color:#25d366;font-size:12px;padding:8px;background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.35);border-radius:6px;">✅ ' + (data.message || 'Reasignado.') + note + '</div>';
+            userInput.value = '';
+        }
+    } catch (err) {
+        resultDiv.innerHTML = '<div style="color:#ff8080;font-size:12px;padding:8px;">Error de conexión: ' + (err.message || err) + '</div>';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '📌 Reasignar usuario'; }
+    }
 }
 
 // IMPORT POR SLOT y desde tab "Importar líneas": UI removida temporalmente
@@ -10034,18 +10120,18 @@ function teamLineUploadXlsx(teamName, linePhone) {
     // Selector de modo (merge vs overwrite/ordenar).
     html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:10px;">';
     html += '  <div style="color:#aaa;font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Modo de carga</div>';
+    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;margin-bottom:4px;background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.30);">';
+    html += '    <input type="radio" name="teamLineUploadMode" value="overwrite" checked style="margin-top:3px;cursor:pointer;">';
+    html += '    <div>';
+    html += '      <div style="color:#ffaa44;font-size:12.5px;font-weight:700;">📌 Modo ordenar (reasigna) — RECOMENDADO</div>';
+    html += '      <div style="color:#aaa;font-size:10.5px;line-height:1.4;">Mueve a TODOS los del archivo a esta línea, aunque ya estén en otra. Este xlsx pasa a ser la verdad.</div>';
+    html += '    </div>';
+    html += '  </label>';
     html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;background:rgba(37,211,102,0.06);">';
-    html += '    <input type="radio" name="teamLineUploadMode" value="merge" checked style="margin-top:3px;cursor:pointer;">';
+    html += '    <input type="radio" name="teamLineUploadMode" value="merge" style="margin-top:3px;cursor:pointer;">';
     html += '    <div>';
     html += '      <div style="color:#25d366;font-size:12.5px;font-weight:700;">🛡 Modo seguro (no rompe)</div>';
     html += '      <div style="color:#aaa;font-size:10.5px;line-height:1.4;">Si un usuario ya está asignado a OTRA línea, lo dejamos donde está. Solo asigna a los que están libres o ya están en esta misma línea.</div>';
-    html += '    </div>';
-    html += '  </label>';
-    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;margin-top:4px;background:rgba(255,170,68,0.06);">';
-    html += '    <input type="radio" name="teamLineUploadMode" value="overwrite" style="margin-top:3px;cursor:pointer;">';
-    html += '    <div>';
-    html += '      <div style="color:#ffaa44;font-size:12.5px;font-weight:700;">📌 Modo ordenar (reasigna)</div>';
-    html += '      <div style="color:#aaa;font-size:10.5px;line-height:1.4;">Mueve a TODOS los del archivo a esta línea, aunque ya estén en otra. Útil para corregir asignaciones que cayeron mal por prefijo automático.</div>';
     html += '    </div>';
     html += '  </label>';
     html += '</div>';
