@@ -5391,8 +5391,8 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     logger.info(`[REFUND] status — usuario: ${username} monthly dep:${monthlyDeposits} bonos:${monthlyBonusCredits} depReal:${monthlyRealDeposits} ret:${monthlyWithdrawals} netLoss:${monthlyNetLoss} belowMin:${monthlyBelowMin}`);
 
     const dailyPotential = Math.round(dailyNetLoss * 0.08);
-    const weeklyPotential = weeklyBelowMin ? 0 : Math.round(weeklyNetLoss * 0.05);
-    const monthlyPotential = monthlyBelowMin ? 0 : Math.round(monthlyNetLoss * 0.03);
+    const weeklyPotential = weeklyBelowMin ? 0 : Math.round(weeklyNetLoss * 0.10);
+    const monthlyPotential = monthlyBelowMin ? 0 : Math.round(monthlyNetLoss * 0.05);
 
     res.json({
       user: {
@@ -5428,7 +5428,7 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
         bonusCredits: weeklyBonusCredits || 0,
         withdrawals: weeklyWithdrawals,
         source: weeklyMov.source,
-        percentage: 5,
+        percentage: 10,
         period: `${lastWeekRange.fromDateStr} a ${lastWeekRange.toDateStr}`
       },
       monthly: {
@@ -5443,7 +5443,7 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
         bonusCredits: monthlyBonusCredits || 0,
         withdrawals: monthlyWithdrawals,
         source: monthlyMov.source,
-        percentage: 3,
+        percentage: 5,
         period: `${lastMonthRange.fromDateStr} a ${lastMonthRange.toDateStr}`
       }
     });
@@ -5726,8 +5726,8 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
 
-      // Calcular monto del reembolso (5% para weekly)
-      const refundAmount = Math.round(netLoss * 0.05);
+      // Calcular monto del reembolso (10% para weekly)
+      const refundAmount = Math.round(netLoss * 0.10);
 
       logger.info('[REFUND] weekly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
@@ -5757,7 +5757,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
           type: 'weekly',
           amount: refundAmount,
           netAmount: netLoss,
-          percentage: 5,
+          percentage: 10,
           period: `${fromDateStr} a ${toDateStr}`,
           periodKey,
           claimedAt: new Date()
@@ -5824,7 +5824,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         success: true,
         message: `¡Reembolso semanal de $${refundAmount} acreditado!`,
         amount: refundAmount,
-        percentage: 5,
+        percentage: 10,
         netAmount: netLoss,
         nextClaim: status.nextClaim
       });
@@ -5961,8 +5961,8 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
 
-      // Calcular monto del reembolso (3% para monthly)
-      const refundAmount = Math.round(netLoss * 0.03);
+      // Calcular monto del reembolso (5% para monthly)
+      const refundAmount = Math.round(netLoss * 0.05);
 
       logger.info('[REFUND] monthly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
@@ -5992,7 +5992,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
           type: 'monthly',
           amount: refundAmount,
           netAmount: netLoss,
-          percentage: 3,
+          percentage: 5,
           period: `${fromDateStr} a ${toDateStr}`,
           periodKey,
           claimedAt: new Date()
@@ -6059,7 +6059,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         success: true,
         message: `¡Reembolso mensual de $${refundAmount} acreditado!`,
         amount: refundAmount,
-        percentage: 3,
+        percentage: 5,
         netAmount: netLoss,
         nextClaim: status.nextClaim
       });

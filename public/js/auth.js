@@ -379,9 +379,9 @@ VIP.auth = (function () {
               '<path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/>' +
             '</svg>';
 
-        // Siempre se renderiza el boton verde con icono + "QUIERO CARGAR". Si hay
-        // numero configurado para el usuario, el href abre WhatsApp; si no, el
-        // boton se renderiza sin link funcional pero mantiene el aspecto.
+        // Decisión del owner 2026-05: si el user no tiene línea cargada en
+        // 'Números vigentes', NO se le muestra el botón CARGUE AQUÍ. Cuando
+        // el operador suba el xlsx y el user refresque, el botón aparece.
         if (phoneEl) {
             if (phone) {
                 const waNumber = phone.replace(/[^\d+]/g, '').replace(/^\+/, '');
@@ -396,13 +396,10 @@ VIP.auth = (function () {
                         waIcon +
                         '<span>CARGUE AQUÍ</span>' +
                     '</a>';
+                phoneEl.style.display = '';
             } else {
-                phoneEl.innerHTML =
-                    '<a href="javascript:void(0)" role="button" aria-disabled="true" ' +
-                      'aria-label="Linea de WhatsApp no configurada">' +
-                        waIcon +
-                        '<span>CARGUE AQUÍ</span>' +
-                    '</a>';
+                phoneEl.innerHTML = '';
+                phoneEl.style.display = 'none';
             }
         }
 
@@ -461,14 +458,15 @@ VIP.auth = (function () {
                         icon +
                         '<span>' + escAttr(lblTxt) + '</span>' +
                     '</a>';
+                communityEl.style.display = '';
             } else {
-                communityEl.innerHTML =
-                    '<a href="javascript:void(0)" role="button" aria-disabled="true" ' +
-                      'aria-label="' + (useWa ? 'Canal de WhatsApp' : 'Canal de WhatsApp') + ' no configurado">' +
-                        icon +
-                        '<span>' + defaultLblTxt + '</span>' +
-                    '</a>';
+                // Sin línea cargada → sin botón de comunidad (el link se
+                // arma desde linePhone). Cuando el admin cargue el xlsx,
+                // vuelve a aparecer.
+                communityEl.innerHTML = '';
+                communityEl.style.display = 'none';
             }
+            if (communityLink || communityLink2) communityEl.style.display = '';
         }
 
         // Pintar el card del bono de bienvenida de inmediato (con texto por

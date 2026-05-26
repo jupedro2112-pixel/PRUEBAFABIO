@@ -347,8 +347,8 @@ VIP.refunds = (function () {
         const typeData = VIP.state.refundStatus[type];
         const titles = {
             daily:   '📅 Reembolso Diario (8%)',
-            weekly:  '📆 Reembolso Semanal (5%)',
-            monthly: '🗓️ Reembolso Mensual (3%)'
+            weekly:  '📆 Reembolso Semanal (10%)',
+            monthly: '🗓️ Reembolso Mensual (5%)'
         };
         const periodLabels = {
             daily:   '📊 PÉRDIDAS DE AYER',

@@ -2723,13 +2723,13 @@
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
-                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (solo Martes)">
+                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (solo Martes)">
                     <span class="refund-label-full">📆 Reembolso Semanal</span>
                     <span class="refund-label-short">📆 SEMANAL</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
-                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 3% (Desde día 7)">
+                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
                     <span class="refund-label-full">🗓️ Reembolso Mensual</span>
                     <span class="refund-label-short">🗓️ MENSUAL</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
@@ -4338,10 +4338,10 @@
             </div>
             <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;">
                 <button onclick="VIP.refunds.showRefundModal('weekly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a6b3a,#2d9b56);">
-                    📆 Reembolso Semanal (5% pérdidas semana)
+                    📆 Reembolso Semanal (10% pérdidas semana)
                 </button>
                 <button onclick="VIP.refunds.showRefundModal('monthly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a3a6b,#2d5b9b);">
-                    🗓️ Reembolso Mensual (3% pérdidas mes)
+                    🗓️ Reembolso Mensual (5% pérdidas mes)
                 </button>
                 <button onclick="VIP.ui.hideModal('unifiedRefundModal')" class="btn btn-secondary">Cerrar</button>
             </div>
