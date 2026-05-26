@@ -356,26 +356,6 @@
                 </div>
 
                 <!-- ============================================
-                     REASIGNAR 1 USUARIO A OTRA LÍNEA
-                     ============================================ -->
-                <div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.22);border-radius:12px;padding:16px;max-width:720px;margin-top:16px;">
-                    <h3 style="margin:0 0 8px;color:#00d4ff;font-size:15px;">👤 Reasignar 1 usuario a otra línea</h3>
-                    <p style="margin:0 0 14px;color:#bbb;font-size:11.5px;line-height:1.5;">
-                        Si un usuario cayó en la línea equivocada (mal asignado por prefijo, o quedó atrás después de un re-import), reasignalo a mano acá. Queda marcado como <strong>asignación manual del admin</strong> — no se pisa con re-imports en modo seguro.
-                    </p>
-                    <div style="display:flex;flex-direction:column;gap:10px;">
-                        <input type="text" id="reassignUserUsername" placeholder="Username (ej: winmartin909)" autocomplete="off" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:14px;font-weight:600;font-family:monospace;box-sizing:border-box;">
-                        <select id="reassignUserLine" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(0,212,255,0.30);background:rgba(0,0,0,0.4);color:#00d4ff;font-size:13px;font-weight:600;box-sizing:border-box;">
-                            <option value="">— Elegí una línea —</option>
-                        </select>
-                        <button id="reassignUserBtn" type="button" onclick="reassignSingleUser()" style="width:100%;padding:11px;font-size:13px;font-weight:700;background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;border-radius:8px;cursor:pointer;">
-                            📌 Reasignar usuario
-                        </button>
-                    </div>
-                    <div id="reassignUserResult" style="margin-top:10px;"></div>
-                </div>
-
-                <!-- ============================================
                      NÚMERO DE SOPORTE (visible para el usuario)
                      ============================================ -->
                 <div style="background:rgba(37,211,102,0.05);border:1px solid rgba(37,211,102,0.22);border-radius:12px;padding:16px;max-width:720px;margin-top:16px;">

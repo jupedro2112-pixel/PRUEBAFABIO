@@ -2858,18 +2858,15 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
 
     let linePhone = null;
     try {
-      // Prioridad 1: asignación explícita por Drive import (User.linePhone).
-      // Si el admin importó este username desde un .xlsx, ese teléfono manda
-      // por encima del matcher por prefijo.
+      // Decisión del owner 2026-05: la línea SOLO sale del xlsx cargado por
+      // admin. Si no está en User.linePhone (drive-import) ni en
+      // UserLineLookup (xlsx Números vigentes), el user NO ve ninguna
+      // línea vigente. NO se usa más matcher por prefijo ni default
+      // general — esos fallbacks terminaban mostrando un número equivocado
+      // a usuarios que el admin no había cargado todavía.
       if (userObj.linePhone) {
         linePhone = userObj.linePhone;
       } else {
-        // Prioridad 2: UserLineLookup (mapeo persistido desde un .xlsx que
-        // pre-incluía a este user, aunque el user se haya creado DESPUÉS
-        // del import — caso típico: importás el Drive y luego el user
-        // entra por primera vez via JUGAYGANA). Si hay match, lo
-        // persistimos en User.linePhone para evitar el lookup en futuros
-        // logins (lazy migration).
         const lookup = await pickLineFromLookup(userObj.username);
         if (lookup && lookup.linePhone) {
           linePhone = lookup.linePhone;
@@ -2887,28 +2884,9 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
               }
             }
           ).catch(err => logger.warn(`[LoginUsernameOnly] lazy persist linePhone falló: ${err.message}`));
-        } else {
-          // Prioridad 3: matcher por prefijo + persist con marker
-          // 'prefix-fallback' o 'general-default' según corresponda.
-          const linesConfig = await getConfig('userLinesByPrefix');
-          const resolved = resolveLineByPrefixFallback(linesConfig, userObj.username);
-          if (resolved && resolved.linePhone) {
-            linePhone = resolved.linePhone;
-            User.updateOne(
-              { id: userId },
-              {
-                $set: {
-                  linePhone: resolved.linePhone,
-                  lineTeamName: resolved.lineTeamName,
-                  lineAssignedAt: new Date(),
-                  lineAssignedBy: 'auto-fallback',
-                  lineAssignmentSource: resolved.source,
-                  lineAssignmentNote: resolved.note
-                }
-              }
-            ).catch(err => logger.warn(`[LoginUsernameOnly] lazy persist fallback falló: ${err.message}`));
-          }
         }
+        // Sin match en lookup → linePhone queda null. El front no muestra
+        // número/equipo ni link de comunidad para este user.
       }
     } catch (cfgErr) {
       logger.warn(`[LoginUsernameOnly] No se pudo resolver línea: ${cfgErr.message}`);
@@ -3006,33 +2984,10 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       }
     }
 
-    // Prioridad 3: matcher por prefijo (longest-prefix-match). Persistir
-    // al User con marker 'prefix-fallback' o 'general-default'.
-    if (!phone || !teamName) {
-      const linesConfig = await getConfig('userLinesByPrefix');
-      const resolved = resolveLineByPrefixFallback(linesConfig, req.user.username);
-      if (resolved) {
-        if (!phone) phone = resolved.linePhone;
-        if (!teamName) teamName = resolved.lineTeamName;
-        // Persistir si el User no tenía ya línea (no pisar lo que vino
-        // de Drive import o lookup).
-        if (userDoc && !userDoc.linePhone) {
-          User.updateOne(
-            { id: req.user.userId },
-            {
-              $set: {
-                linePhone: resolved.linePhone,
-                lineTeamName: resolved.lineTeamName,
-                lineAssignedAt: new Date(),
-                lineAssignedBy: 'auto-fallback',
-                lineAssignmentSource: resolved.source,
-                lineAssignmentNote: resolved.note
-              }
-            }
-          ).catch(err => logger.warn(`[user-lines/me] lazy persist fallback falló: ${err.message}`));
-        }
-      }
-    }
+    // Decisión del owner 2026-05: sin xlsx → sin línea. NO caemos al
+    // matcher por prefijo ni al default general. Si phone/teamName siguen
+    // vacíos a esta altura, se devuelven null y el front no muestra
+    // número ni equipo en la app del jugador.
 
     // Resolución de comunidad: prioridad a la asignación EXPLÍCITA por
     // username (UserCommunityLookup, subida por xlsx). Si no, cae al
@@ -11447,91 +11402,6 @@ app.post('/api/admin/teams/merge', authMiddleware, superAdminMiddleware, async (
   } catch (err) {
     logger.error(`[teams/merge] error: ${err.message}\n${err.stack}`);
     return res.status(500).json({ error: err.message });
-  }
-});
-
-// Reasignar UN solo usuario a una línea específica. Decisión del owner
-// 2026-05: cuando se manda a un user por error a la línea equivocada, hay
-// que poder corregirlo desde el panel admin sin tener que reimportar todo
-// el xlsx.
-//   body: { username, linePhone, lineTeamName }
-// Pisa lo que tenga el User y upsertea el UserLineLookup para que si
-// después se re-importa otro xlsx, esta asignación quede registrada como
-// 'admin-manual' (gana sobre el import en modo merge; en overwrite el xlsx
-// gana — que es lo esperado: el xlsx es la verdad por encima de cualquier
-// cosa, salvo intervención manual posterior).
-app.post('/api/admin/user-lines/assign-user', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const usernameRaw = String((req.body && req.body.username) || '').trim();
-    const linePhoneRaw = String((req.body && req.body.linePhone) || '').trim();
-    const lineTeamName = String((req.body && req.body.lineTeamName) || '').trim();
-    if (!usernameRaw) return res.status(400).json({ error: 'Falta username' });
-    if (!linePhoneRaw) return res.status(400).json({ error: 'Falta linePhone' });
-    if (!lineTeamName) return res.status(400).json({ error: 'Falta lineTeamName' });
-
-    const digits = linePhoneRaw.replace(/[^\d]/g, '');
-    if (digits.length < 7 || digits.length > 18) {
-      return res.status(400).json({ error: `linePhone inválido (${digits.length} dígitos)` });
-    }
-    const linePhone = linePhoneRaw.startsWith('+') ? '+' + digits : '+' + digits;
-
-    const adminUsername = (req.user && req.user.username) || 'admin';
-    const usernameLower = usernameRaw.toLowerCase();
-    const usernameNorm = normalizeUsernameForLookup(usernameRaw);
-
-    // 1) Actualizar el User (si existe). Match case-insensitive porque los
-    //    docs viejos pueden tener mayúsculas mezcladas.
-    const userResult = await User.updateOne(
-      { username: { $regex: new RegExp('^' + escapeRegex(usernameRaw) + '$', 'i') } },
-      {
-        $set: {
-          linePhone,
-          lineTeamName,
-          lineAssignedAt: new Date(),
-          lineAssignedBy: adminUsername,
-          lineAssignmentSource: 'admin-manual',
-          lineAssignmentNote: `Reasignado a mano por ${adminUsername}`
-        }
-      }
-    );
-
-    // 2) Upsert en UserLineLookup para sobrevivir re-imports en modo merge.
-    let lookupResult = null;
-    if (usernameNorm) {
-      lookupResult = await UserLineLookup.updateOne(
-        { usernameNorm },
-        {
-          $set: {
-            usernameOriginal: usernameRaw,
-            linePhone,
-            lineTeamName,
-            importedAt: new Date(),
-            importedBy: adminUsername + ' (manual)'
-          },
-          $setOnInsert: { usernameNorm }
-        },
-        { upsert: true }
-      );
-    }
-
-    logger.info(`[user-lines/assign-user] user=${usernameRaw} phone=${linePhone} team="${lineTeamName}" userMatched=${userResult.matchedCount} userModified=${userResult.modifiedCount} lookupUpserted=${lookupResult ? !!lookupResult.upsertedId : false} by=${adminUsername}`);
-
-    return res.json({
-      success: true,
-      username: usernameRaw,
-      linePhone,
-      lineTeamName,
-      userMatched: userResult.matchedCount || 0,
-      userModified: userResult.modifiedCount || 0,
-      lookupUpserted: lookupResult ? !!lookupResult.upsertedId : false,
-      lookupModified: lookupResult ? (lookupResult.modifiedCount || 0) : 0,
-      message: (userResult.matchedCount || 0) === 0
-        ? 'No existe usuario local con ese username, pero quedó cargado en Números vigentes — caerá en esta línea cuando ingrese por primera vez.'
-        : `Usuario reasignado a "${lineTeamName}" (${linePhone}).`
-    });
-  } catch (error) {
-    logger.error(`[user-lines/assign-user] error: ${error.message}`);
-    res.status(500).json({ error: 'Error del servidor: ' + error.message });
   }
 });
 
