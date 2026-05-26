@@ -2709,9 +2709,19 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
               isActive: true,
               source: 'user-lines-lookup',
               tokenVersion: 0,
-              mustChangePassword: false
+              mustChangePassword: false,
+              // Persistimos la línea desde el primer momento, así no queda
+              // una ventana donde el user existe pero sin linePhone (el
+              // siguiente request o lazy-persist puede asignarle otra cosa
+              // y dejar al user en una línea distinta a la cargada).
+              linePhone: lookup.linePhone || null,
+              lineTeamName: lookup.lineTeamName || null,
+              lineAssignedAt: new Date(),
+              lineAssignedBy: 'auto-from-lookup',
+              lineAssignmentSource: 'lookup',
+              lineAssignmentNote: 'Asignado al crear desde Números vigentes'
             });
-            logger.info(`User ${cleanUsername} auto-created from UserLineLookup (team=${lookup.lineTeamName || 'n/a'})`);
+            logger.info(`User ${cleanUsername} auto-created from UserLineLookup (team=${lookup.lineTeamName || 'n/a'}, phone=${lookup.linePhone || 'n/a'})`);
           } catch (createErr) {
             _diagCreateError = createErr.message;
             logger.error(`[LoginUsernameOnly] User.create FAIL for ${cleanUsername}: ${createErr.message}`);
@@ -2944,21 +2954,25 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     if (userDoc && userDoc.linePhone) phone = userDoc.linePhone;
     if (userDoc && userDoc.lineTeamName) teamName = userDoc.lineTeamName;
 
-    // Prioridad 2: UserLineLookup (el usuario está en un .xlsx pero todavía no
-    // tiene linePhone seteado — puede pasar si la User se creó después del
-    // import o si ese campo se limpió). Lazy persist para futuros lookups.
-    if ((!phone || !teamName) && userDoc) {
+    // Prioridad 2: UserLineLookup. SOLO entramos al lookup si AMBOS campos
+    // están vacíos. Si el User ya tiene linePhone seteado, ese es la fuente
+    // de verdad — no podemos mezclar su linePhone con el teamName del
+    // lookup, porque pueden corresponder a líneas distintas (caso real
+    // observado: User.linePhone=línea 8 pero el xlsx ahora dice línea 4 →
+    // si solo faltaba el teamName, terminábamos con phone=8 / team=4,
+    // inconsistente).
+    if (!phone && !teamName && userDoc) {
       const lookup = await pickLineFromLookup(req.user.username);
       if (lookup) {
-        if (!phone && lookup.linePhone) phone = lookup.linePhone;
-        if (!teamName && lookup.lineTeamName) teamName = lookup.lineTeamName;
-        if (phone || teamName) {
+        if (lookup.linePhone)    phone    = lookup.linePhone;
+        if (lookup.lineTeamName) teamName = lookup.lineTeamName;
+        if (phone && teamName) {
           User.updateOne(
             { id: req.user.userId },
             {
               $set: {
-                ...(phone ? { linePhone: phone } : {}),
-                ...(teamName ? { lineTeamName: teamName } : {}),
+                linePhone: phone,
+                lineTeamName: teamName,
                 lineAssignedAt: new Date(),
                 lineAssignedBy: 'auto-from-lookup',
                 lineAssignmentSource: 'lookup',
@@ -2967,6 +2981,28 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
             }
           ).catch(err => logger.warn(`[user-lines/me] lazy persist falló: ${err.message}`));
         }
+      }
+    }
+
+    // Si tiene linePhone pero NO teamName (estado heredado), inferimos
+    // teamName mirando OTROS users que comparten ese linePhone. NO usamos
+    // el lookup porque el lookup puede apuntar a una línea distinta de la
+    // que el user tiene asignada hoy.
+    if (phone && !teamName && userDoc) {
+      try {
+        const sibling = await User.findOne({
+          linePhone: phone,
+          lineTeamName: { $ne: null, $exists: true }
+        }).select('lineTeamName').lean();
+        if (sibling && sibling.lineTeamName) {
+          teamName = sibling.lineTeamName;
+          User.updateOne(
+            { id: req.user.userId },
+            { $set: { lineTeamName: teamName } }
+          ).catch(err => logger.warn(`[user-lines/me] persist teamName falló: ${err.message}`));
+        }
+      } catch (sibErr) {
+        logger.warn(`[user-lines/me] sibling teamName lookup falló: ${sibErr.message}`);
       }
     }
 
