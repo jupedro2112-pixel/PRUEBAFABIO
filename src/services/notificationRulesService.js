@@ -507,15 +507,15 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
     {
       id: uuidv4(),
       code: 'B5',
-      name: 'Recordatorio reembolso mensual — día 7 12:00',
+      name: 'Recordatorio reembolso mensual — día 5 12:00',
       description: 'Aviso de apertura del 5% mensual.',
       category: 'refund',
       enabled: true,
       triggerType: 'cron',
-      cronSchedule: { hour: 12, minute: 0, dayOfMonth: 7 },
+      cronSchedule: { hour: 12, minute: 0, dayOfMonth: 5 },
       audienceType: 'refund-pending-monthly',
       title: '🗓️ Tu reembolso mensual del 5% está abierto',
-      body: 'Reclamalo cualquier día entre hoy y el 15. Cuanto antes, mejor.',
+      body: 'Reclamalo cualquier día entre hoy y el 10. Después se pierde.',
       bonus: { type: 'none' },
       cooldownMinutes: 24 * 60
     },
@@ -671,10 +671,11 @@ async function migrateRefundRulesMay2026(NotificationRule) {
     {
       code: 'B5',
       set: {
-        name: 'Recordatorio reembolso mensual — día 7 12:00',
+        name: 'Recordatorio reembolso mensual — día 5 12:00',
         description: 'Aviso de apertura del 5% mensual.',
+        cronSchedule: { hour: 12, minute: 0, dayOfMonth: 5 },
         title: '🗓️ Tu reembolso mensual del 5% está abierto',
-        body: 'Reclamalo cualquier día entre hoy y el 15. Cuanto antes, mejor.'
+        body: 'Reclamalo cualquier día entre hoy y el 10. Después se pierde.'
       }
     }
   ];

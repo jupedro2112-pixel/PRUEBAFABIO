@@ -411,7 +411,7 @@ VIP.refunds = (function () {
             }
         } else if (type === 'monthly') {
             const today = new Date().getDate();
-            const isClaimableDay = today >= 7 && today <= 15;
+            const isClaimableDay = today >= 5 && today <= 10;
             if (!isClaimableDay) {
                 availabilityInfo.style.display = 'block';
                 availabilityInfo.style.background = 'rgba(255,165,0,0.1)';
@@ -421,8 +421,25 @@ VIP.refunds = (function () {
                         <span style="font-size: 20px;">ℹ️</span>
                         <div>
                             <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Mensual</p>
-                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable entre los <strong>días 7 y 15</strong> de cada mes</p>
-                            <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde al mes anterior completo</p>
+                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable entre los <strong>días 5 y 10</strong> de cada mes</p>
+                            <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde al mes anterior completo. Si no lo reclamás hasta el día 10, se pierde y se reactiva el próximo mes.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // Está dentro de la ventana: mostramos un cartel verde
+                // recordando hasta cuándo tiene tiempo + qué pasa si no
+                // lo reclama. Más claro que solo confiar en el botón.
+                availabilityInfo.style.display = 'block';
+                availabilityInfo.style.background = 'rgba(37,211,102,0.08)';
+                availabilityInfo.style.border = '1px solid rgba(37,211,102,0.30)';
+                availabilityInfo.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 20px;">✅</span>
+                        <div>
+                            <p style="color: #25d366; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Mensual disponible</p>
+                            <p style="color: #ccc; margin: 0; font-size: 11px;">Reclamalo hasta el <strong>día 10</strong> de este mes.</p>
+                            <p style="color: #aaa; margin: 0; font-size: 10px;">Si no lo reclamás antes del 11, se pierde y se reactiva el próximo mes.</p>
                         </div>
                     </div>
                 `;

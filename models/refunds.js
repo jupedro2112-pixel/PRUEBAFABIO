@@ -129,10 +129,13 @@ async function canClaimWeeklyRefund(userId) {
 }
 
 // Verificar si el usuario puede reclamar reembolso mensual
-// Ventana: día 7 al 15 de cada mes (TZ Argentina), para los movimientos
-// del mes anterior. 1 reclamo por mes calendario.
-const MONTHLY_WINDOW_START = 7;
-const MONTHLY_WINDOW_END = 15;
+// Ventana: día 5 al 10 de cada mes (TZ Argentina), para los movimientos
+// del mes anterior. 1 reclamo por mes calendario. Si el user no reclama
+// en esos 6 días, pierde el reembolso de ese mes — se "limpia" y queda
+// activado para el próximo (porque el periodKey usa YYYY-MM del mes
+// actual, así que cada mes es un slot nuevo independiente).
+const MONTHLY_WINDOW_START = 5;
+const MONTHLY_WINDOW_END = 10;
 async function canClaimMonthlyRefund(userId) {
   try {
     const now = new Date();
