@@ -1224,7 +1224,8 @@ VIP.ui.toggleDrawer = function() {
 
     const items = [
       { emoji: '👤', text: username, action: null, style: 'drawer-user' },
-      { emoji: '📅', text: 'Reembolso Diario', action: () => VIP.refunds.showRefundModal('daily') },
+      // Entrada de "Reembolso Diario" removida (2026-05) — el diario fue
+      // desactivado; quedan solo semanal y mensual.
       { emoji: '📆', text: 'Reembolso Semanal', action: () => VIP.refunds.showRefundModal('weekly') },
       { emoji: '🗓️', text: 'Reembolso Mensual', action: () => VIP.refunds.showRefundModal('monthly') },
       { emoji: '🎰', text: 'Casino', action: () => VIP.ui.openPlatformModal() },

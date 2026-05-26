@@ -346,12 +346,16 @@ VIP.refunds = (function () {
 
         const typeData = VIP.state.refundStatus[type];
         const titles = {
-            daily:   '📅 Reembolso Diario (8%)',
+            // 'daily' queda como string vacío — el modal nunca se abre
+            // para daily (cae el early-return de arriba), pero por las
+            // dudas dejamos el key para evitar `undefined` si algún
+            // browser cacheado todavía manda type='daily'.
+            daily:   '📅 Reembolso',
             weekly:  '📆 Reembolso Semanal (10%)',
             monthly: '🗓️ Reembolso Mensual (5%)'
         };
         const periodLabels = {
-            daily:   '📊 PÉRDIDAS DE AYER',
+            daily:   '📊 PÉRDIDAS',
             weekly:  '📊 PÉRDIDAS DE LA SEMANA PASADA (Lun-Dom)',
             monthly: '📊 PÉRDIDAS DEL MES PASADO'
         };

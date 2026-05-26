@@ -21408,8 +21408,14 @@ setTimeout(async () => {
   try {
     await notificationRulesService.seedDefaultRulesIfMissing(NotificationRule);
     logger.info('[notif-rules] seed inicial completado');
+    // Migración 2026-05: ajustar las reglas B1..B5 ya existentes para
+    // reflejar el nuevo modelo de reembolsos (daily off, semanal 10%
+    // solo martes, mensual 5%). Idempotente: si las reglas ya están en
+    // el estado correcto, no cambia nada.
+    const touched = await notificationRulesService.migrateRefundRulesMay2026(NotificationRule);
+    if (touched > 0) logger.info(`[notif-rules] migración 2026-05: ${touched} regla(s) actualizada(s)`);
   } catch (err) {
-    logger.error(`[notif-rules] seed error: ${err.message}`);
+    logger.error(`[notif-rules] seed/migración error: ${err.message}`);
   }
 }, 60 * 1000);
 

@@ -441,17 +441,20 @@ async function evaluateAllRules({ models, sendPushFn, logger }) {
 async function seedDefaultRulesIfMissing(NotificationRule) {
   const defaults = [
     // ============= REEMBOLSOS =============
+    // B1/B2 (daily) quedaron desactivados (2026-05): el reembolso diario
+    // fue apagado. Las reglas se mantienen como `enabled:false` para que
+    // si el admin quiere reactivarlas en el futuro estén ahí.
     {
       id: uuidv4(),
       code: 'B1',
-      name: 'Recordatorio reembolso diario — tarde (14:00)',
-      description: 'Push al mediodía a quienes perdieron ayer y no reclamaron todavía.',
+      name: 'Recordatorio reembolso diario — tarde (14:00) [APAGADO]',
+      description: 'Reembolso diario desactivado 2026-05.',
       category: 'refund',
-      enabled: true,
+      enabled: false,
       triggerType: 'cron',
       cronSchedule: { hour: 14, minute: 0 },
       audienceType: 'refund-pending-daily',
-      title: '💰 Tu reembolso del 8% te espera',
+      title: '💰 Tu reembolso te espera',
       body: 'Perdiste ayer? Tenés un reembolso disponible. Tocá para reclamarlo.',
       bonus: { type: 'none' },
       cooldownMinutes: 12 * 60
@@ -459,45 +462,45 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
     {
       id: uuidv4(),
       code: 'B2',
-      name: 'Recordatorio reembolso diario — última hora (22:00)',
-      description: 'Último aviso 2h antes del cierre del día ART.',
+      name: 'Recordatorio reembolso diario — última hora (22:00) [APAGADO]',
+      description: 'Reembolso diario desactivado 2026-05.',
       category: 'refund',
-      enabled: true,
+      enabled: false,
       triggerType: 'cron',
       cronSchedule: { hour: 22, minute: 0 },
       audienceType: 'refund-pending-daily',
       title: '⏰ Última hora para tu reembolso',
-      body: 'Quedan 2 horas. No te pierdas el 8% de tu pérdida de ayer.',
+      body: 'Quedan 2 horas. No te pierdas tu reembolso de ayer.',
       bonus: { type: 'none' },
       cooldownMinutes: 8 * 60
     },
     {
       id: uuidv4(),
       code: 'B3',
-      name: 'Recordatorio reembolso semanal — lunes 12:00',
-      description: 'Aviso al mediodía del lunes sobre el 5% de la semana pasada.',
+      name: 'Recordatorio reembolso semanal — martes 12:00',
+      description: 'Aviso al mediodía del martes sobre el 10% de la semana pasada.',
       category: 'refund',
       enabled: true,
       triggerType: 'cron',
-      cronSchedule: { hour: 12, minute: 0, dayOfWeek: 1 },
+      cronSchedule: { hour: 12, minute: 0, dayOfWeek: 2 },
       audienceType: 'refund-pending-weekly',
-      title: '📆 Reembolso del 5% disponible',
-      body: 'Hoy y mañana podés reclamar el reembolso de la semana pasada.',
+      title: '📆 Reembolso del 10% disponible',
+      body: 'Hoy podés reclamar el reembolso de la semana pasada.',
       bonus: { type: 'none' },
       cooldownMinutes: 24 * 60
     },
     {
       id: uuidv4(),
       code: 'B4',
-      name: 'Recordatorio reembolso semanal — martes 18:00 (último día)',
-      description: 'Último aviso. El weekly solo se reclama lunes y martes.',
+      name: 'Recordatorio reembolso semanal — martes 18:00 (último aviso)',
+      description: 'Último aviso. El weekly solo se reclama el martes.',
       category: 'refund',
       enabled: true,
       triggerType: 'cron',
       cronSchedule: { hour: 18, minute: 0, dayOfWeek: 2 },
       audienceType: 'refund-pending-weekly',
       title: '⚠️ Último día para tu reembolso semanal',
-      body: 'Vence a las 23:59. Tocá ahora y reclamá tu 5%.',
+      body: 'Vence a las 23:59. Tocá ahora y reclamá tu 10%.',
       bonus: { type: 'none' },
       cooldownMinutes: 18 * 60
     },
@@ -505,13 +508,13 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
       id: uuidv4(),
       code: 'B5',
       name: 'Recordatorio reembolso mensual — día 7 12:00',
-      description: 'Aviso de apertura del 3% mensual.',
+      description: 'Aviso de apertura del 5% mensual.',
       category: 'refund',
       enabled: true,
       triggerType: 'cron',
       cronSchedule: { hour: 12, minute: 0, dayOfMonth: 7 },
       audienceType: 'refund-pending-monthly',
-      title: '🗓️ Tu reembolso mensual del 3% está abierto',
+      title: '🗓️ Tu reembolso mensual del 5% está abierto',
       body: 'Reclamalo cualquier día entre hoy y el 15. Cuanto antes, mejor.',
       bonus: { type: 'none' },
       cooldownMinutes: 24 * 60
@@ -616,9 +619,85 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
   }
 }
 
+// Migración 2026-05: las reglas B1..B5 ya existían en producción con los
+// % viejos (8% daily, 5% weekly, 3% monthly) y el daily activo. seed*
+// no actualiza reglas existentes. Esta función pisa los campos clave
+// para sincronizar el estado con la nueva configuración (daily off,
+// weekly 10% solo martes, monthly 5%).
+async function migrateRefundRulesMay2026(NotificationRule) {
+  const updates = [
+    {
+      code: 'B1',
+      set: {
+        enabled: false,
+        name: 'Recordatorio reembolso diario — tarde (14:00) [APAGADO]',
+        description: 'Reembolso diario desactivado 2026-05.',
+        title: '💰 Tu reembolso te espera',
+        body: 'Perdiste ayer? Tenés un reembolso disponible. Tocá para reclamarlo.'
+      }
+    },
+    {
+      code: 'B2',
+      set: {
+        enabled: false,
+        name: 'Recordatorio reembolso diario — última hora (22:00) [APAGADO]',
+        description: 'Reembolso diario desactivado 2026-05.',
+        title: '⏰ Última hora para tu reembolso',
+        body: 'Quedan 2 horas. No te pierdas tu reembolso de ayer.'
+      }
+    },
+    {
+      code: 'B3',
+      set: {
+        enabled: true,
+        name: 'Recordatorio reembolso semanal — martes 12:00',
+        description: 'Aviso al mediodía del martes sobre el 10% de la semana pasada.',
+        cronSchedule: { hour: 12, minute: 0, dayOfWeek: 2 },
+        title: '📆 Reembolso del 10% disponible',
+        body: 'Hoy podés reclamar el reembolso de la semana pasada.'
+      }
+    },
+    {
+      code: 'B4',
+      set: {
+        enabled: true,
+        name: 'Recordatorio reembolso semanal — martes 18:00 (último aviso)',
+        description: 'Último aviso. El weekly solo se reclama el martes.',
+        cronSchedule: { hour: 18, minute: 0, dayOfWeek: 2 },
+        title: '⚠️ Último día para tu reembolso semanal',
+        body: 'Vence a las 23:59. Tocá ahora y reclamá tu 10%.'
+      }
+    },
+    {
+      code: 'B5',
+      set: {
+        name: 'Recordatorio reembolso mensual — día 7 12:00',
+        description: 'Aviso de apertura del 5% mensual.',
+        title: '🗓️ Tu reembolso mensual del 5% está abierto',
+        body: 'Reclamalo cualquier día entre hoy y el 15. Cuanto antes, mejor.'
+      }
+    }
+  ];
+  let touched = 0;
+  for (const u of updates) {
+    try {
+      const r = await NotificationRule.updateOne({ code: u.code }, { $set: u.set });
+      if (r.modifiedCount) touched++;
+    } catch (e) {
+      // No queremos que un error de migración bloquee el startup.
+      console.warn(`[migrateRefundRulesMay2026] rule ${u.code} failed: ${e.message}`);
+    }
+  }
+  if (touched > 0) {
+    console.log(`[migrateRefundRulesMay2026] reglas actualizadas: ${touched}`);
+  }
+  return touched;
+}
+
 module.exports = {
   evaluateAllRules,
   seedDefaultRulesIfMissing,
+  migrateRefundRulesMay2026,
   // Exportados para tests / uso desde admin endpoints.
   _resolveAudience,
   _cronMatchesNow
