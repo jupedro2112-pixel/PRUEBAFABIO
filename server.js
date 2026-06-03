@@ -1583,6 +1583,7 @@ app.get('/api/health', async (req, res) => {
   const mongoOk = mongoState === 1;
   res.json({
     status: mongoOk ? 'ok' : 'degraded',
+    deployMarker: 'render-test-2026-06-03',
     mongo: mongoStates[mongoState] || 'unknown',
     env: {
       // Sólo flags booleanos — NO se exponen valores reales para no filtrar secrets.
