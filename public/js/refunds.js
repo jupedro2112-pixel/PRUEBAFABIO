@@ -608,20 +608,31 @@ VIP.refunds = (function () {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
 
-            const data = await response.json();
+            // Parseo robusto: si el server devuelve un 502/504 con HTML (el
+            // proxy de Render cuando el reclamo tarda) response.json() reventaría
+            // y el user veía "Error de conexión" sin saber que fue el servidor.
+            let data = null;
+            try { data = await response.json(); } catch (_) { data = null; }
 
-            if (data.success) {
+            if (data && data.success) {
                 VIP.ui.showToast(`✅ ${data.message}`, 'success');
                 VIP.ui.hideModal('refundModal');
                 loadRefundStatus();
                 try { VIP.chat && VIP.chat.sendSystemMessage && VIP.chat.sendSystemMessage(`🎁 Reembolso ${type} reclamado: $${data.amount.toLocaleString()}`); } catch (_) { /* refunds-only: chat may be hidden */ }
-            } else {
+            } else if (data) {
                 VIP.ui.showToast(`ℹ️ ${data.message}`, 'info');
                 VIP.ui.hideModal('refundModal');
                 loadRefundStatus();
+            } else {
+                // Respuesta sin JSON válido (proxy caído / timeout). El reclamo
+                // pudo haberse procesado igual en el server: refrescamos el
+                // estado y dejamos reintentar (es idempotente por período).
+                VIP.ui.showToast(`⚠️ El servidor tardó en responder${response && response.status ? ' (error ' + response.status + ')' : ''}. Probá de nuevo en unos segundos.`, 'error');
+                loadRefundStatus();
             }
         } catch (error) {
-            VIP.ui.showToast('Error de conexión', 'error');
+            // fetch solo lanza ante falla de red real (sin señal / conexión cortada).
+            VIP.ui.showToast('📶 Sin conexión. Revisá tu internet y probá de nuevo.', 'error');
         } finally {
             if (claimBtn) {
                 claimBtn.disabled = false;
