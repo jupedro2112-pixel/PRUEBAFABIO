@@ -5862,46 +5862,13 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
 
-    // Server-side gate: el reembolso mensual exige que el usuario tenga PWA
-    // instalada + notificaciones activas (mismo gate del frontend). Lo
-    // chequeamos acá para que no se pueda bypassear con DevTools curl. La
-    // señal real es User.fcmTokens con context='standalone' (la PWA real
-    // refresca el token en cada apertura, así que tokens vivos == app activa)
-    // y notifPermission='granted' en algún token.
-    try {
-      const userDoc = await User.findOne({ id: userId })
-        .select('fcmTokens notifPermission fcmTokenContext')
-        .lean();
-      const tokens = (userDoc && Array.isArray(userDoc.fcmTokens)) ? userDoc.fcmTokens : [];
-      // Flags sueltos para mensajería al cliente.
-      const hasApp = (userDoc && userDoc.fcmTokenContext === 'standalone')
-        || tokens.some(t => t && t.context === 'standalone');
-      const hasNotifs = (userDoc && userDoc.notifPermission === 'granted')
-        || tokens.some(t => t && t.notifPermission === 'granted');
-      // Gate REAL: el MISMO token tiene que tener context=standalone Y
-      // notifPermission=granted. Sin esto, un user con split tokens
-      // (PWA-no-permiso + browser-con-permiso) pasaba el gate sin tener
-      // un canal de push real.
-      const legacyPasses = userDoc && userDoc.fcmTokenContext === 'standalone' && userDoc.notifPermission === 'granted';
-      const arrayPasses = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
-      const hasChannel = !!(legacyPasses || arrayPasses);
-      if (!hasChannel) {
-        return res.status(403).json({
-          success: false,
-          message: 'El reembolso mensual requiere tener la app instalada y notificaciones activas.',
-          canClaim: false,
-          requiresPwa: !hasApp,
-          requiresNotifs: !hasNotifs
-        });
-      }
-    } catch (gateErr) {
-      logger.warn(`[refund/monthly] gate check error: ${gateErr.message}`);
-      // Si el chequeo falla, NO dejamos pasar — fail-safe.
-      return res.status(503).json({
-        success: false,
-        message: 'No pudimos verificar los requisitos. Intentá de nuevo.'
-      });
-    }
+    // Politica 2026-06: el reembolso mensual YA NO exige PWA instalada ni
+    // notificaciones activas. Se removió el gate server-side que devolvía 403
+    // exigiendo un token con context='standalone' + notifPermission='granted',
+    // porque el prompt de instalación disparaba el bloqueo de Google Play
+    // Protect ("app no segura") en algunos Android y dejaba al usuario sin
+    // poder reclamar. Ahora se reclama libremente (las notificaciones son solo
+    // una sugerencia opcional en el frontend).
 
     if (!await acquireRefundLock(userId, 'monthly')) {
       return res.json({

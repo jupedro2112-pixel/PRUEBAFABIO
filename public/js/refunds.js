@@ -24,12 +24,13 @@ VIP.refunds = (function () {
         return isStandalone() && isNotifGranted();
     }
 
-    // Solo el reembolso mensual y el bono de bienvenida exigen PWA instalada
-    // + notificaciones activas. Daily y weekly se reclaman libremente, aunque
-    // seguimos sugiriendo instalar la app y activar notificaciones para que
-    // el usuario reciba los avisos de acreditacion.
+    // Politica 2026-06: reclamar reembolsos YA NO exige tener la PWA instalada
+    // ni notificaciones activas. Antes el monthly/welcome lo exigian, pero el
+    // prompt de instalacion disparaba el bloqueo de Google Play Protect
+    // ("app no segura") en algunos Android y dejaba al usuario sin poder
+    // reclamar. Ahora se reclama libremente; solo SUGERIMOS (sin bloquear)
+    // activar notificaciones para avisar cuando se acredita el reembolso.
     function claimRequirementsMet(type) {
-        if (type === 'monthly' || type === 'welcome') return canClaim();
         return true;
     }
 
@@ -541,37 +542,29 @@ VIP.refunds = (function () {
     function renderRefundRequirementsBlock(claimType) {
         const block = document.getElementById('refundRequirementsBlock');
         if (!block) return;
-        if (claimType !== 'monthly' || canClaim()) {
+        // Ya no es una "condicion" para reclamar: es solo una sugerencia
+        // opcional de notificaciones. La mostramos en el monthly mientras el
+        // usuario no las tenga activas; si ya las tiene, la ocultamos.
+        if (claimType !== 'monthly' || isNotifGranted()) {
             block.style.display = 'none';
             return;
         }
         block.style.display = 'block';
 
-        const inApp = isStandalone();
-        const installed = isAppInstalled();
         const notifOk = isNotifGranted();
-
-        const installBadge = document.getElementById('refundReqInstallBadge');
         const notifBadge   = document.getElementById('refundReqNotifBadge');
-        const installBtn   = document.getElementById('refundReqInstallBtn');
         const notifBtn     = document.getElementById('refundReqNotifBtn');
         const stepInstall  = document.getElementById('refundReqStepInstall');
         const introMsg     = document.getElementById('refundReqIntroMsg');
 
-        if (installBadge) installBadge.textContent = inApp ? '✅' : '⏳';
-        if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
-
-        if (installBtn) {
-            installBtn.disabled = inApp;
-            installBtn.textContent = inApp ? '✅ App instalada' : '📱 Instalar la app';
-            installBtn.style.opacity = inApp ? '0.6' : '1';
-            installBtn.onclick = async () => {
-                _pendingClaimType = claimType || null;
-                await handleRequirementInstall();
-                renderRefundRequirementsBlock(claimType);
-                refreshClaimButtonState(claimType);
-            };
+        // El paso de instalar la app ya no aplica: lo ocultamos siempre.
+        if (stepInstall) stepInstall.style.display = 'none';
+        if (introMsg) {
+            introMsg.innerHTML = 'Ya podés reclamar tu reembolso. <strong>Opcional:</strong> activá las notificaciones para enterarte al instante cuando se acredite.';
         }
+
+        if (notifBadge) notifBadge.textContent = notifOk ? '✅' : '🔔';
+
         if (notifBtn) {
             notifBtn.disabled = notifOk;
             notifBtn.textContent = notifOk ? '✅ Notificaciones activas' : '🔔 Activar notificaciones';
@@ -580,23 +573,7 @@ VIP.refunds = (function () {
                 _pendingClaimType = claimType || null;
                 await handleRequirementNotif();
                 renderRefundRequirementsBlock(claimType);
-                refreshClaimButtonState(claimType);
             };
-        }
-
-        // Mismo criterio que refreshRequirementsModal: si ya esta instalada
-        // pero el user esta en navegador, ocultamos el paso 1 y reescribimos
-        // el mensaje superior.
-        if (installed && !inApp) {
-            if (stepInstall) stepInstall.style.display = 'none';
-            if (introMsg) {
-                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar tu reembolso. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
-            }
-        } else {
-            if (stepInstall) stepInstall.style.display = '';
-            if (introMsg) {
-                introMsg.innerHTML = 'Para reclamar este reembolso necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamarlo sin problemas.';
-            }
         }
     }
 
