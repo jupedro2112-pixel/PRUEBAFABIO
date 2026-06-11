@@ -265,12 +265,12 @@ VIP.refunds = (function () {
         btn.disabled = false;
         btn.classList.remove('claimed');
 
-        // Caso "ya reclamado este período": mostramos el monto reclamado en gris
-        // y el countdown al próximo, sin sugerir que se puede volver a reclamar.
+        // Caso "ya reclamado este período": mostramos "Cobrado" (no el monto,
+        // porque dejaba la impresión de que el próximo mes se cobra lo mismo)
+        // y el countdown al próximo período.
         if (data.claimed) {
-            const claimedAmt = Number(data.lastClaimAmount || 0);
-            amount.textContent = `$${claimedAmt.toLocaleString()}`;
-            _saveCachedAmount('refund_' + type, claimedAmt);
+            amount.textContent = '✓ Cobrado';
+            _saveCachedAmount('refund_' + type, 0);
             btn.classList.add('claimed');
             btn.style.opacity = '0.55';
             if (data.nextClaim) {
@@ -466,7 +466,10 @@ VIP.refunds = (function () {
 
         if (isClaimed) {
             const claimedAmt = Number(typeData.lastClaimAmount || 0);
-            extraInfo.innerHTML = `<span style="color: #ffaa44;">✓ Ya reclamaste <strong>$${claimedAmt.toLocaleString()}</strong> en este período. Disponible en: <strong>${timeRemaining || 'pronto'}</strong></span>`;
+            // Ya cobró este período: el monto grande dice "Cobrado" para no
+            // sugerir que ese importe vuelve a estar disponible.
+            document.getElementById('refundAmount').textContent = '✓ Cobrado';
+            extraInfo.innerHTML = `<span style="color: #ffaa44;">✓ Ya cobraste <strong>$${claimedAmt.toLocaleString()}</strong> en este período. Próximo reembolso disponible en: <strong>${timeRemaining || 'pronto'}</strong></span>`;
             claimBtn.disabled = true;
             claimBtn.textContent = timeRemaining ? `✓ Reclamado — disponible en ${timeRemaining}` : '✓ Reclamado';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
