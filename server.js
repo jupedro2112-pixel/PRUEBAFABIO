@@ -130,11 +130,20 @@ const generalLimiter = rateLimit({
 // algunos vieron 5xx y reintentaron). El login es username-only sin
 // password, así que no hay riesgo de brute-force de credenciales —
 // solo evita enumeración masiva.
+// Clave por USUARIO + IP (no solo IP): detrás de Cloudflare/NAT muchos
+// usuarios reales comparten la misma IP y se bloqueaban entre sí. Con esta
+// clave cada usuario tiene su propio cupo y ninguno queda afuera por
+// compartir red con otros.
+const _rlIpKey = (typeof rateLimit.ipKeyGenerator === 'function') ? rateLimit.ipKeyGenerator : (ip) => ip;
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 40,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    const u = String((req.body && req.body.username) || (req.query && req.query.username) || '').trim().toLowerCase().slice(0, 60);
+    return (u ? 'u:' + u + '|' : '') + _rlIpKey(req.ip || '');
+  },
   message: { error: 'Demasiados intentos de autenticación. Intenta más tarde.' }
 });
 
@@ -2804,13 +2813,13 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
       });
     }
 
-    // === Anti multi-cuenta por dispositivo ===
-    // El front manda un ID propio guardado en el navegador. Si este
-    // dispositivo ya inició con OTRO usuario, se bloquea la cuenta con la
-    // que intenta entrar ahora. Si la verificación falla, NO bloquea
-    // (fail-open: no dejamos afuera a nadie por un error de DB).
+    // === Registro de dispositivo (SOLO auditoría, NO bloquea) ===
+    // Antes: si el dispositivo ya había iniciado con OTRO usuario, se
+    // bloqueaba la cuenta (DEVICE_MISMATCH). Eso dejaba afuera a usuarios
+    // reales que comparten celular/navegador/red. Ahora solo se guarda el
+    // primer usuario que entró desde el dispositivo como dato, y el login
+    // continúa siempre. Cualquier error acá tampoco frena el ingreso.
     const deviceId = String((req.body && req.body.deviceId) || '').trim().slice(0, 80);
-    logger.info(`[device-check] login user=${userObj.username} deviceId=${deviceId || 'NINGUNO (front no lo mandó)'}`);
     if (deviceId) {
       try {
         const dev = await DeviceAccount.findOne({ deviceId }).lean();
@@ -2820,25 +2829,8 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
             { $setOnInsert: { deviceId, username: userObj.username, createdAt: new Date() } },
             { upsert: true }
           );
-          logger.info(`[device-check] dispositivo NUEVO — reclamado por ${userObj.username}`);
         } else if (String(dev.username || '').toLowerCase() !== String(userObj.username || '').toLowerCase()) {
-          const reason = `Multi-cuenta: inició con ${userObj.username} en un dispositivo registrado a ${dev.username}.`;
-          try {
-            await User.updateOne({ id: userId }, { $set: {
-              fraudBlocked: true,
-              fraudReason: reason,
-              fraudBlockedAt: new Date()
-            } });
-          } catch (e) {
-            logger.warn(`[device-check] no se pudo flaggear ${userObj.username}: ${e.message}`);
-          }
-          logger.warn(`[device-check] ${userObj.username} bloqueado — dispositivo de ${dev.username}`);
-          return res.status(403).json({
-            error: 'Tu cuenta fue bloqueada: iniciaste sesión con un usuario distinto al registrado en este dispositivo. Contactá a soporte.',
-            code: 'DEVICE_MISMATCH'
-          });
-        } else {
-          logger.info(`[device-check] OK — el dispositivo ya pertenece a ${userObj.username}`);
+          logger.info(`[device-check] ${userObj.username} entra desde un dispositivo registrado a ${dev.username} — permitido (bloqueo por dispositivo desactivado)`);
         }
       } catch (devErr) {
         logger.warn(`[device-check] error, el login continúa: ${devErr.message}`);
@@ -17233,30 +17225,14 @@ function _getClientIp(req) {
   return ip.slice(0, 60);
 }
 
-// Si este dispositivo (huella) ya cobró el welcome bonus desde otra cuenta,
-// bloquear. Detecta el escenario "el user cobró, borró caché/desinstaló,
-// creó otra cuenta JUGAYGANA y volvió a instalar la PWA en el mismo
-// celular". La huella se recolecta en el frontend (userAgent + screen +
-// timezone + language + canvas hash → SHA-256). Es razonablemente estable
-// salvo factory reset / reemplazo del dispositivo.
-async function _isWelcomeBlockedByFingerprint(userId, username, fingerprint) {
-  try {
-    if (!fingerprint || typeof fingerprint !== 'string' || fingerprint.length < 16) {
-      return { blocked: false };
-    }
-    const prior = await RefundClaim.findOne({
-      type: 'welcome_install',
-      deviceFingerprint: fingerprint,
-      userId: { $ne: userId },
-      username: { $ne: username }
-    }).lean();
-    if (!prior) return { blocked: false };
-    logger.warn(`[BONUS] welcome bloqueado por dispositivo duplicado. ${username} (fp=${fingerprint.slice(0,12)}…) — ya cobró ${prior.username}`);
-    return { blocked: true, otherUsername: prior.username, claimedAt: prior.claimedAt, fingerprint };
-  } catch (e) {
-    logger.warn(`[BONUS] _isWelcomeBlockedByFingerprint error: ${e.message}`);
-    return { blocked: false };
-  }
+// BLOQUEO POR HUELLA DE DISPOSITIVO DESACTIVADO. Antes: si esta huella
+// (userAgent + screen + timezone + language + canvas → SHA-256) ya había
+// cobrado el welcome bonus desde otra cuenta, se bloqueaba el reclamo y se
+// marcaba la cuenta como fraude. Ahora nunca bloquea. La huella se sigue
+// guardando en RefundClaim/User como dato de auditoría. El bono sigue siendo
+// one-time por usuario (índice unique + pre-check por userId/username).
+async function _isWelcomeBlockedByFingerprint(_userId, _username, _fingerprint) {
+  return { blocked: false };
 }
 
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
